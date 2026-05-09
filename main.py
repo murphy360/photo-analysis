@@ -26,14 +26,18 @@ class ImageRecognitionResult(BaseModel):
 app = FastAPI(title="Photo Analysis Service")
 
 
-@app.post("/analyze", response_model=ImageRecognitionResult)
-async def analyze_image(file: UploadFile = File(...)) -> ImageRecognitionResult:
+@app.on_event("startup")
+def configure_gemini() -> None:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise HTTPException(
-            status_code=500, detail="Missing required environment variable: GEMINI_API_KEY"
-        )
+        raise RuntimeError("Missing required environment variable: GEMINI_API_KEY")
 
+    genai.configure(api_key=api_key)
+    app.state.gemini_model = genai.GenerativeModel("gemini-3-flash")
+
+
+@app.post("/analyze", response_model=ImageRecognitionResult)
+async def analyze_image(file: UploadFile = File(...)) -> ImageRecognitionResult:
     image_bytes = await file.read()
     try:
         image = Image.open(io.BytesIO(image_bytes))
@@ -41,8 +45,6 @@ async def analyze_image(file: UploadFile = File(...)) -> ImageRecognitionResult:
     except (UnidentifiedImageError, OSError) as exc:
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image") from exc
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-3-flash")
     prompt = (
         "Analyze this photo and respond with JSON that strictly matches this schema: "
         '{"subjects": ["string"], "text_content": "string", '
@@ -51,7 +53,7 @@ async def analyze_image(file: UploadFile = File(...)) -> ImageRecognitionResult:
     )
 
     try:
-        response = model.generate_content(
+        response = app.state.gemini_model.generate_content(
             [prompt, image],
             generation_config={
                 "response_mime_type": "application/json",
