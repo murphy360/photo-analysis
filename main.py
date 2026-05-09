@@ -1,7 +1,6 @@
 import io
 import json
 import os
-from typing import List
 
 import google.generativeai as genai
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -10,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class ImageRecognitionResult(BaseModel):
-    subjects: List[str] = Field(
+    subjects: list[str] = Field(
         description="List of primary objects or people in the photo."
     )
     text_content: str = Field(
