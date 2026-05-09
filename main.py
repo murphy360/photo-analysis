@@ -1,6 +1,7 @@
 import io
 import json
 import os
+from contextlib import asynccontextmanager
 
 import google.generativeai as genai
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -23,17 +24,18 @@ class ImageRecognitionResult(BaseModel):
     )
 
 
-app = FastAPI(title="Photo Analysis Service")
-
-
-@app.on_event("startup")
-def configure_gemini() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("Missing required environment variable: GEMINI_API_KEY")
 
     genai.configure(api_key=api_key)
     app.state.gemini_model = genai.GenerativeModel("gemini-3-flash")
+    yield
+
+
+app = FastAPI(title="Photo Analysis Service", lifespan=lifespan)
 
 
 @app.post("/analyze", response_model=ImageRecognitionResult)
