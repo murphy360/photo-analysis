@@ -146,8 +146,29 @@ camera's location.)
 ## CompreFace
 
 Point `COMPREFACE_URL` / `COMPREFACE_RECOGNITION_API_KEY` at your existing
-CompreFace deployment's recognition service. Identity is entirely
-CompreFace's — this service doesn't maintain its own face gallery.
+CompreFace deployment's recognition service (from CompreFace's UI: open your
+Application → the **Face Recognition** service inside it → its API key is
+shown there — not the admin key). Identity is entirely CompreFace's — this
+service doesn't maintain its own face gallery.
+
+Unrecognized faces (below `COMPREFACE_SIMILARITY_THRESHOLD`) are reported as
+subject `"unknown"` rather than dropped, so a job still tells you a person
+was there even when CompreFace can't name them.
+
+**Auto-enrolling new faces.** Set `auto_enroll_unknown_faces: true` on a
+source in `sources.yaml` to have an unrecognized face registered as a new
+placeholder subject automatically, instead of just reported as `"unknown"`.
+Placeholder subjects are named `"<unknown_face_label> <n>"` (e.g. `"Amazon
+Driver 1"`, `"Amazon Driver 2"` — set `unknown_face_label` per source, e.g.
+to track recurring delivery drivers on a front-door camera), numbered from
+whatever already exists in CompreFace so it stays correct across restarts.
+Once enrolled, the *next* sighting of that same person matches the
+placeholder instead of creating a new one — so you periodically browse
+CompreFace's own UI and rename the placeholders you recognize to real names;
+this service never renames or merges subjects itself. Leave it off (the
+default) for any source with a lot of foot traffic that isn't yours (a yard
+cam catching mail carriers, neighbors, solicitors), or you'll fill your face
+collection with one-off strangers.
 
 ## MCP adapter
 

@@ -15,6 +15,22 @@
 # bump a source from its `base_tier` up to `escalate_tier`. Use ["*"] to
 # always escalate regardless of what triage finds (e.g. an explicit upload
 # from another project, where every image is worth analyzing).
+#
+# `auto_enroll_unknown_faces` (default false): when CompreFace can't put a
+# name to a face, register it as a new placeholder subject instead of just
+# reporting "unknown" — so the *next* sighting of that same person matches
+# the placeholder instead of being flagged unknown again. Rename the
+# placeholder to a real name in CompreFace's own UI once you know who it is;
+# this service never renames or merges subjects itself. Leave this off for
+# any source with a lot of foot traffic that isn't yours (mail carriers,
+# neighbors, solicitors) or you'll fill your face collection with strangers.
+#
+# `unknown_face_label` (default "Unknown") names that placeholder series:
+# subjects come out numbered "<label> 1", "<label> 2", etc., e.g. set it to
+# "Amazon Driver" on a front-door source mostly used to tell delivery drivers
+# apart — you'll still get the occasional wrong guess for a genuine guest or
+# a different courier, same as any auto-enroll false positive; just rename
+# that one in CompreFace afterward.
 
 default:
   base_tier: skip
@@ -34,12 +50,18 @@ sources:
     max_daily_analyses: 150
 
   # Front door: worth describing every visit (packages, guests), and a person
-  # at the door always gets the better model.
+  # at the door always gets the better model. Auto-enroll here (not on
+  # front_yard) since a face at the door is worth building recognition for,
+  # and it sees far fewer random strangers than a yard-facing camera. Labeled
+  # for tracking recurring delivery drivers specifically; rename any that
+  # turn out to be a guest or a different courier once you spot them.
   front_door:
     base_tier: cheap
     escalate_tier: standard
     escalate_on: [person]
     max_daily_analyses: 300
+    auto_enroll_unknown_faces: true
+    unknown_face_label: "Amazon Driver"
 
   driveway:
     base_tier: skip

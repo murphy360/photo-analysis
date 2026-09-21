@@ -8,6 +8,29 @@ from app.pipeline import triage
 from app.pipeline.types import DetectedObject, TriageResult
 from tests.conftest import FakeProvider
 
+
+class FakeCompreFaceClient:
+    """Stands in for a real CompreFace deployment: one unrecognized face and
+    one already-known one, so auto-enroll tests can assert on both paths
+    without any network mocking. enroll_calls is a class attribute (not
+    instance) since app.pipeline.orchestrator constructs a fresh client per
+    job — tests read it right after the job completes and don't reuse it."""
+
+    enroll_calls: list[tuple[str, dict | None]] = []
+
+    def __init__(self) -> None:
+        self.configured = True
+
+    async def recognize(self, image_bytes: bytes) -> list[dict]:
+        return [
+            {"subject": "unknown", "similarity": 0.0, "box": {"x_min": 0, "y_min": 0, "x_max": 8, "y_max": 8}},
+            {"subject": "Corey", "similarity": 0.95, "box": {"x_min": 20, "y_min": 20, "x_max": 30, "y_max": 30}},
+        ]
+
+    async def enroll_face(self, image_bytes: bytes, box: dict | None, label: str) -> str:
+        FakeCompreFaceClient.enroll_calls.append((label, box))
+        return f"{label} {len(FakeCompreFaceClient.enroll_calls)}"
+
 API_KEY = "test-key"
 
 
@@ -127,3 +150,51 @@ async def test_person_escalates_and_calls_provider(monkeypatch, tmp_path):
     assert fake.calls == 1
     assert job["description"] == "A person approaches the front door."
     assert job["description_providers"] == ["fake"]
+
+
+async def test_unknown_face_auto_enrolled_with_sequential_label(monkeypatch, tmp_path):
+    """A source with auto_enroll_unknown_faces on: an unrecognized face gets
+    enrolled under "<unknown_face_label> <n>" and flagged newly_enrolled,
+    while an already-known face passes through untouched — no enroll call
+    for it."""
+    await _configure_default_policy(
+        monkeypatch,
+        tmp_path,
+        base_tier="standard",
+        escalate_tier="standard",
+        auto_enroll_unknown_faces=True,
+        unknown_face_label="Amazon Driver",
+    )
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(
+            objects=[DetectedObject(label="person", category="person", confidence=0.9)]
+        ),
+    )
+    fake = FakeProvider("fake", text="A driver drops off a package.")
+    monkeypatch.setattr(
+        "app.pipeline.orchestrator.pick_providers", lambda preference, count: [fake]
+    )
+    FakeCompreFaceClient.enroll_calls = []
+    monkeypatch.setattr("app.pipeline.orchestrator.CompreFaceClient", FakeCompreFaceClient)
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "front_door_enroll_test"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["status"] == "completed"
+    assert FakeCompreFaceClient.enroll_calls == [("Amazon Driver", {"x_min": 0, "y_min": 0, "x_max": 8, "y_max": 8})]
+
+    people_by_subject = {p["subject"]: p for p in job["people"]}
+    assert people_by_subject["Amazon Driver 1"]["newly_enrolled"] is True
+    assert "Corey" in people_by_subject
+    assert people_by_subject["Corey"].get("newly_enrolled") is not True

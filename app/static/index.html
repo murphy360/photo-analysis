@@ -98,6 +98,7 @@
   .objects span { display: inline-block; margin: 0.2rem 0.3rem 0 0; padding: 0.1rem 0.5rem; border-radius: 10px; background: var(--bg-subtle); border: 1px solid var(--border); font-size: 0.8rem; }
   .people span { display: inline-block; margin: 0.2rem 0.3rem 0 0; padding: 0.1rem 0.5rem; border-radius: 10px; background: var(--bg-subtle); border: 1px solid var(--ok); font-size: 0.8rem; }
   .people span.unknown { border-color: var(--warn); }
+  .people span.new { border-color: var(--accent); color: var(--accent); }
   code { font-size: 0.8rem; }
 </style>
 </head>
@@ -275,10 +276,11 @@ function objectsHtml(objects) {
 function peopleHtml(people) {
   if (!people || people.length === 0) return "<div class=\"meta\">(no faces recognized — CompreFace either wasn't run, or found none)</div>";
   return `<div class="people">${people
-    .map(
-      (p) =>
-        `<span class="${p.subject === "unknown" ? "unknown" : ""}">${escapeHtml(p.subject)} (${Math.round((p.similarity || 0) * 100)}%)</span>`,
-    )
+    .map((p) => {
+      const cls = p.subject === "unknown" ? "unknown" : p.newly_enrolled ? "new" : "";
+      const note = p.newly_enrolled ? " · new, enrolled in CompreFace" : "";
+      return `<span class="${cls}">${escapeHtml(p.subject)} (${Math.round((p.similarity || 0) * 100)}%)${note}</span>`;
+    })
     .join("")}</div>`;
 }
 

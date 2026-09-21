@@ -24,6 +24,17 @@ class SourcePolicy(BaseModel):
     provider_preference: list[str] = Field(
         default_factory=lambda: ["anthropic", "gemini", "openai", "grok"]
     )
+    # Opt-in per source: an unrecognized face gets enrolled in CompreFace as a
+    # new placeholder subject instead of just being reported as "unknown".
+    # Off by default — a source with a lot of foot traffic that isn't yours
+    # (a yard cam catching mail carriers, neighbors, etc.) would otherwise
+    # fill your face collection with strangers.
+    auto_enroll_unknown_faces: bool = False
+    # Names the placeholder series enrolled subjects get: "<label> 1",
+    # "<label> 2", etc. (e.g. "Amazon Driver" for a front-door source you're
+    # tracking recurring delivery drivers on). Numbering is derived from
+    # CompreFace's existing subjects, not a counter this service keeps.
+    unknown_face_label: str = "Unknown"
 
     def escalates(self, triage: TriageResult) -> bool:
         if "*" in self.escalate_on:

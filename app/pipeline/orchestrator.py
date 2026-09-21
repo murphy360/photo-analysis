@@ -12,6 +12,7 @@ from app.integrations.compreface import CompreFaceClient
 from app.models.analysis import AnalysisJob
 from app.models.enums import AnalysisTier, JobStatus
 from app.pipeline import policy, triage
+from app.pipeline.policy import SourcePolicy
 from app.pipeline.types import DescriptionResult
 from app.providers.registry import pick_providers
 from app.schemas.analysis import AnalysisJobResponse
@@ -59,15 +60,33 @@ async def _describe(
     return merged, [r.provider for r in results]
 
 
-async def _recognize_people(image_bytes: bytes) -> list[dict]:
+async def _recognize_people(image_bytes: bytes, source_policy: SourcePolicy) -> list[dict]:
     client = CompreFaceClient()
     if not client.configured:
         return []
     try:
-        return await client.recognize(image_bytes)
+        people = await client.recognize(image_bytes)
     except Exception:
         logger.exception("CompreFace recognition failed")
         return []
+
+    if not source_policy.auto_enroll_unknown_faces:
+        return people
+
+    enrolled: list[dict] = []
+    for person in people:
+        if person["subject"] != "unknown":
+            enrolled.append(person)
+            continue
+        try:
+            subject = await client.enroll_face(
+                image_bytes, person.get("box"), source_policy.unknown_face_label
+            )
+            enrolled.append({**person, "subject": subject, "newly_enrolled": True})
+        except Exception:
+            logger.exception("Failed to auto-enroll unknown face in CompreFace")
+            enrolled.append(person)
+    return enrolled
 
 
 async def _noop_people() -> list[dict]:
@@ -121,7 +140,9 @@ async def run_analysis_job(job_id: int, requested_tier: AnalysisTier | None) -> 
                     "person" in triage_result.labels or decision.tier == AnalysisTier.THOROUGH
                 )
                 people, (description, providers_used) = await asyncio.gather(
-                    _recognize_people(image_bytes) if run_face_id else _noop_people(),
+                    _recognize_people(image_bytes, decision.policy)
+                    if run_face_id
+                    else _noop_people(),
                     _describe(
                         job_id, image_bytes, mime_type, decision.tier, decision.policy.provider_preference
                     ),
