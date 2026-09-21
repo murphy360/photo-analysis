@@ -36,4 +36,9 @@ RUN mkdir -p /app/data/media
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# alembic upgrade head is the real schema migration path — init_db()'s
+# create_all (app/core/db.py) only ever creates tables that don't exist yet,
+# so it silently no-ops on an existing database missing a column a newer
+# model added. `exec` hands off PID 1 to uvicorn so `docker stop` signals it
+# directly instead of a wrapper shell.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

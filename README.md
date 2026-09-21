@@ -270,3 +270,30 @@ needing any state beyond what's already in the jobs table.
 docker compose build app
 docker compose run --rm app pytest -v
 ```
+
+### Schema changes
+
+The container runs `alembic upgrade head` on startup (Dockerfile `CMD`) —
+that's what applies a schema change to an *existing* database. `init_db()`
+(`app/core/db.py`) still calls SQLModel's `create_all`, but that only
+creates tables that don't exist yet; it silently does nothing to a table
+that already exists but is missing a column a newer model added, so it's
+only a safety net for the test suite's fresh per-run SQLite file, not a
+substitute for a real migration.
+
+**Whenever you add/change a field on `AnalysisJob`, generate a migration for
+it, or every existing database (including anyone's real one) keeps the old
+schema and every insert starts failing:**
+
+```bash
+docker compose run --rm app alembic revision --autogenerate -m "add whatever_field"
+```
+
+Then open the generated file in `alembic/versions/` and add `import sqlmodel`
+near the top — autogenerate doesn't add it, even though it references
+`sqlmodel.sql.sqltypes.AutoString` for string columns (the `script.py.mako`
+template now includes this import for anything generated from here on, but
+double check). Verify the migration against a copy of a real database
+before trusting it, not just a fresh empty one — `op.create_table` on a
+table that already exists is a different failure than a missing column, and
+only shows up against a database that already has data.
