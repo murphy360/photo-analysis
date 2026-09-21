@@ -1,0 +1,58 @@
+# Per-source (camera/location, or calling-project) analysis policy.
+#
+# "source" on a POST /v1/analyze request is looked up here by exact match,
+# falling back to `default` when there's no entry for it — a camera you
+# haven't configured yet just gets conservative defaults instead of a 404.
+#
+# Tiers, cheapest to most expensive:
+#   skip     - triage (free, local object detection) only, no face-id, no LLM call
+#   cheap    - one fast/cheap vision-LLM call
+#   standard - one capable vision-LLM call
+#   thorough - multiple providers cross-checked; face-id always runs even if
+#              triage didn't flag a person, in case it missed a partial occlusion
+#
+# `escalate_on` lists which local triage labels (person / animal / vehicle)
+# bump a source from its `base_tier` up to `escalate_tier`. Use ["*"] to
+# always escalate regardless of what triage finds (e.g. an explicit upload
+# from another project, where every image is worth analyzing).
+
+default:
+  base_tier: skip
+  escalate_tier: standard
+  escalate_on: [person]
+  max_daily_analyses: 100
+  provider_preference: [anthropic, gemini, openai, grok]
+
+sources:
+  # Reolink camera watching the yard: deer/rabbits/raccoons wandering through
+  # are extremely common and not worth an LLM call; a person shows up rarely
+  # enough that even the cheap tier is fine when it happens.
+  front_yard:
+    base_tier: skip
+    escalate_tier: cheap
+    escalate_on: [person]
+    max_daily_analyses: 150
+
+  # Front door: worth describing every visit (packages, guests), and a person
+  # at the door always gets the better model.
+  front_door:
+    base_tier: cheap
+    escalate_tier: standard
+    escalate_on: [person]
+    max_daily_analyses: 300
+
+  driveway:
+    base_tier: skip
+    escalate_tier: standard
+    escalate_on: [person, vehicle]
+    max_daily_analyses: 200
+
+  # Non-camera project (photo/video uploads from memoire) — always worth full
+  # analysis regardless of what triage sees, and cross-checked across two
+  # providers since there's no "routine deer" case to optimize away here.
+  memoire:
+    base_tier: thorough
+    escalate_tier: thorough
+    escalate_on: ["*"]
+    max_daily_analyses: 1000
+    provider_preference: [anthropic, gemini]
