@@ -4,12 +4,13 @@
 # falling back to `default` when there's no entry for it — a camera you
 # haven't configured yet just gets conservative defaults instead of a 404.
 #
-# Tiers, cheapest to most expensive:
-#   skip     - triage (free, local object detection) only, no face-id, no LLM call
+# Local triage and CompreFace face-id are both free (self-hosted, no
+# per-call cost) and always run regardless of tier. Tiers only gate the paid
+# vision-LLM description step, cheapest to most expensive:
+#   skip     - no paid LLM call at all
 #   cheap    - one fast/cheap vision-LLM call
 #   standard - one capable vision-LLM call
-#   thorough - multiple providers cross-checked; face-id always runs even if
-#              triage didn't flag a person, in case it missed a partial occlusion
+#   thorough - multiple providers cross-checked
 #
 # `escalate_on` lists which local triage labels (person / animal / vehicle)
 # bump a source from its `base_tier` up to `escalate_tier`. Use ["*"] to
@@ -42,8 +43,22 @@ default:
 sources:
   # Reolink camera watching the yard: deer/rabbits/raccoons wandering through
   # are extremely common and not worth an LLM call; a person shows up rarely
-  # enough that even the cheap tier is fine when it happens.
+  # enough that even the cheap tier is fine when it happens. No auto-enroll
+  # here — a yard cam catches enough random strangers (mail carriers,
+  # neighbors, solicitors) that auto-enrolling would fill the face
+  # collection with one-off strangers; CompreFace still tries to recognize
+  # against your existing subjects either way, just doesn't add new ones.
   front_yard:
+    base_tier: skip
+    escalate_tier: cheap
+    escalate_on: [person]
+    max_daily_analyses: 150
+
+  # Same camera as front_yard above, keyed to match whatever your actual
+  # HA automation/client sends as `source` — source lookup is an exact,
+  # case-sensitive string match, so this needs its own entry rather than
+  # falling back to `default`. Keep both in sync, or standardize on one name.
+  "Front Yard":
     base_tier: skip
     escalate_tier: cheap
     escalate_on: [person]

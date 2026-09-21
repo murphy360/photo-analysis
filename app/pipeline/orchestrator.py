@@ -13,7 +13,7 @@ from app.models.analysis import AnalysisJob
 from app.models.enums import AnalysisTier, JobStatus
 from app.pipeline import policy, triage
 from app.pipeline.policy import SourcePolicy
-from app.pipeline.types import DescriptionResult
+from app.pipeline.types import DescriptionResult, TriageResult
 from app.providers.registry import pick_providers
 from app.schemas.analysis import AnalysisJobResponse
 
@@ -89,8 +89,11 @@ async def _recognize_people(image_bytes: bytes, source_policy: SourcePolicy) -> 
     return enrolled
 
 
-async def _noop_people() -> list[dict]:
-    return []
+async def _skip_description(triage_result: TriageResult) -> tuple[str, list[str]]:
+    if triage_result.is_empty:
+        return "Triage only (no LLM call): nothing notable detected.", []
+    detail = ", ".join(sorted(f"{o.category} ({o.label})" for o in triage_result.objects))
+    return f"Triage only (no LLM call): detected {detail}.", []
 
 
 async def run_analysis_job(job_id: int, requested_tier: AnalysisTier | None) -> None:
@@ -126,30 +129,26 @@ async def run_analysis_job(job_id: int, requested_tier: AnalysisTier | None) -> 
             job.tier_used = decision.tier
             job.budget_note = decision.budget_note
 
-            if decision.tier == AnalysisTier.SKIP:
-                if triage_result.is_empty:
-                    job.description = "Triage only (no LLM call): nothing notable detected."
-                else:
-                    detail = ", ".join(
-                        sorted(f"{o.category} ({o.label})" for o in triage_result.objects)
-                    )
-                    job.description = f"Triage only (no LLM call): detected {detail}."
-                job.description_providers = []
-            else:
-                run_face_id = (
-                    "person" in triage_result.labels or decision.tier == AnalysisTier.THOROUGH
+            # CompreFace and local triage are both free (self-hosted, no
+            # per-call cost), so face-id always runs regardless of tier —
+            # only the paid vision-LLM description step is tier-gated. This
+            # also means a person triage's object detector missed (partial
+            # occlusion, small/distant, misclassified) still gets a chance
+            # at being identified.
+            description_task = (
+                _skip_description(triage_result)
+                if decision.tier == AnalysisTier.SKIP
+                else _describe(
+                    job_id, image_bytes, mime_type, decision.tier, decision.policy.provider_preference
                 )
-                people, (description, providers_used) = await asyncio.gather(
-                    _recognize_people(image_bytes, decision.policy)
-                    if run_face_id
-                    else _noop_people(),
-                    _describe(
-                        job_id, image_bytes, mime_type, decision.tier, decision.policy.provider_preference
-                    ),
-                )
-                job.people = people
-                job.description = description
-                job.description_providers = providers_used
+            )
+            people, (description, providers_used) = await asyncio.gather(
+                _recognize_people(image_bytes, decision.policy),
+                description_task,
+            )
+            job.people = people
+            job.description = description
+            job.description_providers = providers_used
 
             job.status = JobStatus.COMPLETED
         except Exception as exc:  # noqa: BLE001 - surfaced to the client via job.error

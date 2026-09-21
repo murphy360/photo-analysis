@@ -198,3 +198,36 @@ async def test_unknown_face_auto_enrolled_with_sequential_label(monkeypatch, tmp
     assert people_by_subject["Amazon Driver 1"]["newly_enrolled"] is True
     assert "Corey" in people_by_subject
     assert people_by_subject["Corey"].get("newly_enrolled") is not True
+
+
+async def test_compreface_runs_even_on_skip_tier(monkeypatch, tmp_path):
+    """CompreFace and local triage are both free, so face-id must run on
+    every image regardless of tier — including skip, where triage found
+    only an animal and no paid LLM call happens at all. This catches a
+    person the object detector missed (occlusion, distance, misclassified)."""
+    await _configure_default_policy(monkeypatch, tmp_path)  # base_tier: skip
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(
+            objects=[DetectedObject(label="dog", category="animal", confidence=0.9)]
+        ),
+    )
+    monkeypatch.setattr("app.pipeline.orchestrator.CompreFaceClient", FakeCompreFaceClient)
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "yard_cam_skip_still_recognizes_test"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["status"] == "completed"
+    assert job["tier_used"] == "skip"
+    assert job["description_providers"] == []  # no paid LLM call
+    assert {p["subject"] for p in job["people"]} == {"unknown", "Corey"}

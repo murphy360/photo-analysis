@@ -260,10 +260,10 @@ dropzone.addEventListener("drop", (e) => {
 });
 
 const TIER_NOTE = {
-  skip: "Triage only — no CompreFace call, no LLM call. This is the whole point: routine images shouldn't cost anything.",
+  skip: "No paid LLM call — this is the whole point: routine images shouldn't cost anything. CompreFace still ran (it's free/self-hosted).",
   cheap: "One fast/cheap vision-LLM call.",
   standard: "One capable vision-LLM call.",
-  thorough: "Multiple providers cross-checked; face-id always runs.",
+  thorough: "Multiple providers cross-checked.",
 };
 
 function objectsHtml(objects) {

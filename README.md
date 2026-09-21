@@ -63,20 +63,35 @@ recognition ("is this the same doe as yesterday") is a much harder, mostly
 research-grade problem and isn't planned.
 
 `app/config/sources.yaml` then maps what triage found, plus the camera
-("source") it came from, to an **analysis tier**:
+("source") it came from, to an **analysis tier** — but only for the paid
+vision-LLM description step. Local triage and CompreFace face-id are both
+free (self-hosted, no per-call cost) and **always run, on every image,
+regardless of tier** — there's no reason to gate either behind the paid-LLM
+decision, and it means a person the object detector missed (partial
+occlusion, small/distant, misclassified as something else) still gets a
+chance at being identified. Tiers, cheapest to most expensive:
 
 | Tier | What happens |
 |---|---|
-| `skip` | Triage result only. No face-id, no LLM call. |
+| `skip` | No paid LLM call at all. |
 | `cheap` | One fast/cheap vision-LLM call. |
 | `standard` | One capable vision-LLM call. |
-| `thorough` | 2+ providers, cross-checked (same generator/verifier idea as trivia_service). Face-id always runs, even if triage missed a person. |
+| `thorough` | 2+ providers, cross-checked (same generator/verifier idea as trivia_service). |
 
 Each source also has a `max_daily_analyses` hard cap — once hit, everything
 falls back to `skip` regardless of what triage sees, so a stuck camera can't
-run up a bill. See `app/config/sources.example.yaml` for the full policy
-format and a worked example (yard cam vs. front door vs. memoire uploads).
+run up a bill (triage and CompreFace still run; only the LLM call is capped).
+See `app/config/sources.example.yaml` for the full policy format and a
+worked example (yard cam vs. front door vs. memoire uploads).
 
+**Gotcha: source matching is an exact, case-sensitive string comparison.**
+If your camera/automation sends `"Front Yard"` but `sources.yaml` only has a
+`front_yard:` entry, that request silently falls through to `default:`
+instead of erroring — you'll get conservative fallback behavior with no
+indication anything's misconfigured. Whatever string your client actually
+sends is the key that has to exist in `sources.yaml`; check the `source`
+field on a returned job (or in `/ui`) against your config if a camera seems
+to be getting the wrong tier or policy.
 
 ## Running it
 
@@ -90,10 +105,24 @@ This starts two services:
 - `app` on `:8000` — the REST API
 - `mcp` on `:8001` — the MCP adapter (streamable-HTTP), for MCP clients like Claude
 
+## Test console (`/ui`)
+
+`http://<host>:8000/ui` is a manual test page (`app/static/index.html`,
+mounted in `app/main.py`): drag in a photo or video, pick a `source` and
+optional tier override, and see the actual pipeline output — triage objects,
+tier decision, CompreFace people (including a distinct badge for a
+just-auto-enrolled face), and the LLM description — rather than just a `202
+Accepted`. Paste your `PHOTO_SERVICE_API_KEY` into the field at the top
+(stored in the browser's `localStorage`, never sent anywhere but this
+service). Not part of the product API — just the fastest way to confirm a
+change actually behaves the way you expect against a real image, including
+recent history via the "Recent analyses" section
+(`GET /v1/analyses`).
+
 ## API
 
-All endpoints (except `/health`) require an `X-API-Key` header matching
-`PHOTO_SERVICE_API_KEY`.
+All endpoints (except `/health` and `/ui`) require an `X-API-Key` header
+matching `PHOTO_SERVICE_API_KEY`.
 
 ### `POST /v1/analyze`
 
@@ -168,7 +197,9 @@ CompreFace's own UI and rename the placeholders you recognize to real names;
 this service never renames or merges subjects itself. Leave it off (the
 default) for any source with a lot of foot traffic that isn't yours (a yard
 cam catching mail carriers, neighbors, solicitors), or you'll fill your face
-collection with one-off strangers.
+collection with one-off strangers. It can also be set on the top-level
+`default:` block in `sources.yaml` to apply everywhere at once, same as any
+other policy field.
 
 ## MCP adapter
 

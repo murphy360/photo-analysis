@@ -1,15 +1,18 @@
 # Per-source (camera/location, or calling-project) analysis policy.
 #
-# "source" on a POST /v1/analyze request is looked up here by exact match,
-# falling back to `default` when there's no entry for it — a camera you
-# haven't configured yet just gets conservative defaults instead of a 404.
+# "source" on a POST /v1/analyze request is looked up here by an exact,
+# case-sensitive string match, falling back to `default` when there's no
+# entry for it — a camera you haven't configured yet (or whose name here
+# doesn't quite match what your client actually sends, e.g. "front_yard" vs
+# "Front Yard") just gets conservative defaults instead of a 404 or an error.
 #
-# Tiers, cheapest to most expensive:
-#   skip     - triage (free, local object detection) only, no face-id, no LLM call
+# Local triage and CompreFace face-id are both free (self-hosted, no
+# per-call cost) and always run regardless of tier. Tiers only gate the paid
+# vision-LLM description step, cheapest to most expensive:
+#   skip     - no paid LLM call at all
 #   cheap    - one fast/cheap vision-LLM call
 #   standard - one capable vision-LLM call
-#   thorough - multiple providers cross-checked; face-id always runs even if
-#              triage didn't flag a person, in case it missed a partial occlusion
+#   thorough - multiple providers cross-checked
 #
 # `escalate_on` lists which local triage labels (person / animal / vehicle)
 # bump a source from its `base_tier` up to `escalate_tier`. Use ["*"] to
