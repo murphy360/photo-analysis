@@ -1,8 +1,35 @@
 import io
 
+import httpx
+import pytest
 from PIL import Image
 
-from app.integrations.compreface import _crop_face
+from app.integrations.compreface import CompreFaceClient, _crop_face
+
+
+_RealAsyncClient = httpx.AsyncClient
+
+
+def _mock_client(handler):
+    """Monkeypatches httpx.AsyncClient (as used inside CompreFaceClient) to
+    always route through a MockTransport — exercises the real httpx request/
+    response machinery (headers, raise_for_status, JSON parsing) against a
+    fake server response, rather than hand-rolling fake response objects.
+    Calls the real class captured above, not httpx.AsyncClient itself —
+    that name is what's being patched, so using it here would recurse."""
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return _RealAsyncClient(*args, **kwargs)
+
+    return factory
+
+
+def _fake_client() -> CompreFaceClient:
+    client = CompreFaceClient()
+    client._base_url = "http://fake-compreface"
+    client._api_key = "test-key"
+    return client
 
 
 def _jpeg(width: int, height: int) -> bytes:
@@ -40,3 +67,36 @@ def test_crop_face_pads_around_a_central_box():
 def test_crop_face_without_a_box_returns_original_bytes():
     image_bytes = _jpeg(50, 50)
     assert _crop_face(image_bytes, None) == image_bytes
+
+
+async def test_recognize_treats_no_face_response_as_empty_result(monkeypatch):
+    """CompreFace responds with HTTP 400 + error code 28 for a completely
+    normal case (no detectable face in the photo, e.g. one facing away from
+    the camera) — this must come back as an empty list, not an exception."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400, json={"message": "No face is found in the given image", "code": 28}
+        )
+
+    monkeypatch.setattr(
+        "app.integrations.compreface.httpx.AsyncClient", _mock_client(handler)
+    )
+
+    result = await _fake_client().recognize(_jpeg(50, 50))
+    assert result == []
+
+
+async def test_recognize_still_raises_on_a_genuine_error(monkeypatch):
+    """A different 400 (or any other error status) must still propagate —
+    only the specific "no face found" code is treated as a non-error."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"message": "Some other problem", "code": 1})
+
+    monkeypatch.setattr(
+        "app.integrations.compreface.httpx.AsyncClient", _mock_client(handler)
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _fake_client().recognize(_jpeg(50, 50))

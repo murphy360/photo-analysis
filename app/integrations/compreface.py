@@ -7,6 +7,13 @@ from PIL import Image
 from app.core.config import get_settings
 
 
+def _error_code(response: httpx.Response) -> int | None:
+    try:
+        return response.json().get("code")
+    except ValueError:
+        return None
+
+
 def _crop_face(image_bytes: bytes, box: dict | None) -> bytes:
     """Crops to just the detected face (with a little padding) before
     enrolling it, rather than submitting the whole source photo — CompreFace
@@ -59,6 +66,12 @@ class CompreFaceClient:
                 files={"file": ("image.jpg", image_bytes, "image/jpeg")},
                 params={"limit": 1, "det_prob_threshold": 0.8},
             )
+            # CompreFace's way of saying "no face in this image" is an HTTP
+            # 400 with error code 28, not a 200 with an empty result — a
+            # normal, expected outcome (e.g. a face angled away from the
+            # camera), not a failure worth raising/logging as one.
+            if response.status_code == 400 and _error_code(response) == 28:
+                return []
             response.raise_for_status()
             data = response.json()
 
