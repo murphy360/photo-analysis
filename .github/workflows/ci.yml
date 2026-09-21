@@ -42,7 +42,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `image` must be a real matrix dimension, not left implicit in
+        # `include` alone: an include entry that omits a matrix key (here
+        # `arch`) gets merged into *every* combination of the base matrix
+        # rather than scoped to one, so a second such entry silently
+        # overwrites the first instead of adding a new leg. Declaring both
+        # dimensions up front gives the full arch x image cross product,
+        # and `include` then only attaches the per-image constants.
         arch: [amd64, arm64]
+        image: [app, mcp]
         include:
           - image: app
             dockerfile: Dockerfile
