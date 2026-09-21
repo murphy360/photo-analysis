@@ -72,7 +72,14 @@
   .dropzone.drag { border-color: var(--accent); opacity: 1; }
   .dropzone input { display: none; }
   .preview { margin-top: 0.75rem; text-align: center; }
-  .preview img { max-width: 100%; max-height: 320px; border-radius: 8px; border: 1px solid var(--border); }
+  .preview-wrap { position: relative; display: inline-block; max-width: 100%; }
+  .preview-wrap img { display: block; max-width: 100%; max-height: 320px; border-radius: 8px; border: 1px solid var(--border); }
+  .preview-wrap svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .box-legend { margin-top: 0.4rem; font-size: 0.75rem; opacity: 0.75; }
+  .box-legend span { display: inline-block; margin-right: 0.8rem; }
+  .box-legend .swatch { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 2px; margin-right: 0.25rem; vertical-align: -1px; }
+  .provider-card { border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.8rem; margin-top: 0.5rem; }
+  .provider-card .meta { font-size: 0.75rem; opacity: 0.7; margin-bottom: 0.3rem; }
   .card {
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -132,6 +139,11 @@
         </select>
       </div>
     </div>
+
+    <label style="display:flex; align-items:center; gap:0.4rem; margin-top:0.8rem;">
+      <input type="checkbox" id="compareProviders" style="width:auto; margin:0;" />
+      Compare every enabled provider (testing only — ignores tier for the LLM call, costs one call per provider)
+    </label>
 
     <label>Image or video</label>
     <div class="dropzone" id="dropzone">
@@ -225,9 +237,25 @@ function setFile(file) {
   label.textContent = `${file.name} (${(file.size / 1024).toFixed(0)} KB)`;
   preview.innerHTML = "";
   if (file.type.startsWith("image/")) {
+    const wrap = document.createElement("div");
+    wrap.className = "preview-wrap";
+
     const img = document.createElement("img");
+    img.id = "previewImg";
     img.src = URL.createObjectURL(file);
-    preview.appendChild(img);
+    wrap.appendChild(img);
+
+    // viewBox in the image's natural pixel size means every <rect> drawn
+    // later can just use the raw box coordinates the API returns — SVG
+    // handles scaling them to however large the image actually renders.
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.id = "previewBoxes";
+    wrap.appendChild(svg);
+    img.addEventListener("load", () => {
+      svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+    });
+
+    preview.appendChild(wrap);
   } else if (file.type.startsWith("video/")) {
     const video = document.createElement("video");
     video.src = URL.createObjectURL(file);
@@ -273,8 +301,11 @@ function objectsHtml(objects) {
     .join("")}</div>`;
 }
 
-function peopleHtml(people) {
-  if (!people || people.length === 0) return "<div class=\"meta\">(no faces recognized — CompreFace either wasn't run, or found none)</div>";
+function peopleHtml(job) {
+  const people = job.people || [];
+  if (people.length === 0) {
+    return `<div class="meta">${escapeHtml(job.people_note) || "(CompreFace hasn't reported yet)"}</div>`;
+  }
   return `<div class="people">${people
     .map((p) => {
       const cls = p.subject === "unknown" ? "unknown" : p.newly_enrolled ? "new" : "";
@@ -284,23 +315,86 @@ function peopleHtml(people) {
     .join("")}</div>`;
 }
 
-function resultCard(job) {
+const TRIAGE_BOX_COLOR = "#fbbf24";
+const PEOPLE_BOX_COLORS = { recognized: "#15803d", unknown: "#b45309", new: "#2563eb" };
+
+function drawBoxes(job) {
+  const svg = document.getElementById("previewBoxes");
+  if (!svg) return;
+  svg.innerHTML = "";
+
+  const addRect = (box, color) => {
+    if (!box) return;
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", box.x_min);
+    rect.setAttribute("y", box.y_min);
+    rect.setAttribute("width", Math.max(0, box.x_max - box.x_min));
+    rect.setAttribute("height", Math.max(0, box.y_max - box.y_min));
+    rect.setAttribute("fill", "none");
+    rect.setAttribute("stroke", color);
+    rect.setAttribute("stroke-width", "3");
+    // Keeps the outline a constant visual thickness regardless of how much
+    // the viewBox (natural image size) differs from the rendered CSS size.
+    rect.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.appendChild(rect);
+  };
+
+  (job.triage_objects || []).forEach((o) => addRect(o.box, TRIAGE_BOX_COLOR));
+  (job.people || []).forEach((p) => {
+    const kind = p.newly_enrolled ? "new" : p.subject === "unknown" ? "unknown" : "recognized";
+    addRect(p.box, PEOPLE_BOX_COLORS[kind]);
+  });
+}
+
+function boxLegendHtml(job) {
+  if (!document.getElementById("previewBoxes")) return ""; // no live image (e.g. a browsed history card)
+  return `<div class="box-legend">
+    <span><i class="swatch" style="background:${TRIAGE_BOX_COLOR}"></i>triage object</span>
+    <span><i class="swatch" style="background:${PEOPLE_BOX_COLORS.recognized}"></i>recognized</span>
+    <span><i class="swatch" style="background:${PEOPLE_BOX_COLORS.unknown}"></i>unknown</span>
+    <span><i class="swatch" style="background:${PEOPLE_BOX_COLORS.new}"></i>newly enrolled</span>
+  </div>`;
+}
+
+function providerResultsHtml(job) {
+  const results = job.provider_results || [];
+  if (results.length === 0 || (results.length === 1 && !job.compare_providers)) return null;
+  return `
+    <div style="margin-top:0.6rem"><b>Provider comparison</b> <span class="meta">(${results.length} provider(s), testing mode)</span></div>
+    ${results
+      .map(
+        (r) => `<div class="provider-card">
+          <div class="meta"><b>${escapeHtml(r.provider)}</b></div>
+          <div>${escapeHtml(r.text)}</div>
+        </div>`,
+      )
+      .join("")}`;
+}
+
+function resultCard(job, live) {
   const tier = job.tier_used || "(pending)";
   const providers = (job.description_providers || []).join(", ") || "none";
+  const comparison = providerResultsHtml(job);
   return `
     <div class="card">
-      <div><span class="badge tier-${tier}">${escapeHtml(tier)}</span>${job.status === "completed" ? "" : `<span class="badge">${job.status}</span>`}</div>
+      <div>
+        <span class="badge tier-${tier}">${escapeHtml(tier)}</span>${job.status === "completed" ? "" : `<span class="badge">${job.status}</span>`}${job.compare_providers ? '<span class="badge" style="border-color:var(--accent);color:var(--accent)">comparing providers</span>' : ""}
+      </div>
       <div class="meta">${TIER_NOTE[job.tier_used] || ""}</div>
       ${job.budget_note ? `<div class="meta">⚠ ${escapeHtml(job.budget_note)}</div>` : ""}
+      ${live ? boxLegendHtml(job) : ""}
 
       <div style="margin-top:0.6rem"><b>Local triage (free, always runs)</b></div>
       ${objectsHtml(job.triage_objects)}
 
       <div style="margin-top:0.6rem"><b>People (CompreFace)</b></div>
-      ${peopleHtml(job.people)}
+      ${peopleHtml(job)}
 
-      <div style="margin-top:0.6rem"><b>Description</b> <span class="meta">(${escapeHtml(providers)})</span></div>
-      <div>${escapeHtml(job.description) || "<em>(none)</em>"}</div>
+      ${
+        comparison ||
+        `<div style="margin-top:0.6rem"><b>Description</b> <span class="meta">(${escapeHtml(providers)})</span></div>
+      <div>${escapeHtml(job.description) || "<em>(none)</em>"}</div>`
+      }
 
       <div class="meta">job #${job.id} · source "${escapeHtml(job.source)}" · created ${job.created_at}${job.completed_at ? " · completed " + job.completed_at : ""}</div>
       ${job.error ? `<div class="meta" style="color:var(--error)">error: ${escapeHtml(job.error)}</div>` : ""}
@@ -314,7 +408,8 @@ async function pollJob(jobId, attempt = 0) {
       throw new Error("Gave up polling after 60 attempts — check /v1/jobs/" + jobId + " manually.");
     }
     setStatus("analyzeStatus", `Job ${jobId}: ${job.status}…`);
-    document.getElementById("analyzeResult").innerHTML = resultCard(job);
+    document.getElementById("analyzeResult").innerHTML = resultCard(job, true);
+    drawBoxes(job);
     await new Promise((r) => setTimeout(r, 1500));
     return pollJob(jobId, attempt + 1);
   }
@@ -333,6 +428,9 @@ async function analyze() {
     form.append("source", document.getElementById("source").value || "test");
     const tier = document.getElementById("tier").value;
     if (tier) form.append("tier", tier);
+    if (document.getElementById("compareProviders").checked) {
+      form.append("compare_providers", "true");
+    }
 
     const job = await apiFetch("/v1/analyze", { method: "POST", body: form });
     setStatus("analyzeStatus", `Job ${job.id} created, waiting…`);
@@ -340,7 +438,8 @@ async function analyze() {
 
     const kind = finished.status === "failed" ? "error" : "ok";
     setStatus("analyzeStatus", `Job ${finished.id}: ${finished.status}.`, kind);
-    document.getElementById("analyzeResult").innerHTML = resultCard(finished);
+    document.getElementById("analyzeResult").innerHTML = resultCard(finished, true);
+    drawBoxes(finished);
   } catch (err) {
     setStatus("analyzeStatus", String(err.message || err), "error");
   } finally {
@@ -359,7 +458,7 @@ async function browse() {
 
     const jobs = await apiFetch(`/v1/analyses?${params.toString()}`);
     setStatus("browseStatus", `${jobs.length} analysis(es).`, "ok");
-    document.getElementById("browseResults").innerHTML = jobs.map(resultCard).join("");
+    document.getElementById("browseResults").innerHTML = jobs.map((job) => resultCard(job)).join("");
   } catch (err) {
     setStatus("browseStatus", String(err.message || err), "error");
   }

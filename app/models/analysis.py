@@ -32,11 +32,23 @@ class AnalysisJob(SQLModel, table=True):
     # Free local object-detection pass (app.pipeline.triage). Always runs.
     triage_objects: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
 
-    # CompreFace results, only populated when policy decided to run face-id.
+    # CompreFace results. Always attempted now (it's free), but "people" being
+    # empty is ambiguous on its own — people_note says which of "not
+    # configured" / "ran, found no face" / "errored" actually happened.
     people: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    people_note: str | None = Field(default=None)
 
     description: str | None = Field(default=None)
     description_providers: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # One entry per vision-LLM provider that actually ran: {"provider", "text"}.
+    # Same data description/description_providers summarize, kept separately
+    # (not just re-parsed from the merged description string) so a caller —
+    # namely /ui's provider-comparison view — can render each one distinctly.
+    provider_results: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    # True when this job forced every enabled provider to run for comparison
+    # (a /ui-only testing knob — production traffic picks one via tier
+    # policy), regardless of what tier_used would normally have dispatched.
+    compare_providers: bool = Field(default=False)
 
     budget_note: str | None = Field(default=None)
     error: str | None = Field(default=None)

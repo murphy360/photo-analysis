@@ -60,8 +60,14 @@ def run(image_path: str) -> TriageResult:
         for box in result.boxes:
             label = names[int(box.cls[0])]
             confidence = float(box.conf[0])
+            x_min, y_min, x_max, y_max = box.xyxy[0].tolist()
             objects.append(
-                DetectedObject(label=label, category=_category(label), confidence=confidence)
+                DetectedObject(
+                    label=label,
+                    category=_category(label),
+                    confidence=confidence,
+                    box={"x_min": x_min, "y_min": y_min, "x_max": x_max, "y_max": y_max},
+                )
             )
 
     return TriageResult(objects=objects)

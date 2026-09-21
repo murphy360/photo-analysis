@@ -35,6 +35,14 @@ async def analyze(
     tier: AnalysisTier | None = Form(default=None, description="Override the source's policy tier"),
     callback_url: str | None = Form(default=None, description="POSTed the finished job when done"),
     metadata: str | None = Form(default=None, description="JSON object, stored and echoed back"),
+    compare_providers: bool = Form(
+        default=False,
+        description=(
+            "Testing only: run every enabled vision-LLM provider and report each one's "
+            "answer separately, instead of the tier's usual pick — costs one call per "
+            "provider, not meant for production traffic."
+        ),
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> AnalysisJobResponse:
     settings = get_settings()
@@ -82,7 +90,7 @@ async def analyze(
     await session.commit()
     await session.refresh(job)
 
-    background_tasks.add_task(run_analysis_job, job.id, tier)
+    background_tasks.add_task(run_analysis_job, job.id, tier, compare_providers)
     return AnalysisJobResponse.model_validate(job)
 
 

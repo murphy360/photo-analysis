@@ -22,8 +22,11 @@ class AnalysisJobResponse(BaseModel):
     tier_used: AnalysisTier | None
     triage_objects: list[dict]
     people: list[dict]
+    people_note: str | None
     description: str | None
     description_providers: list[str]
+    provider_results: list[dict]
+    compare_providers: bool
     budget_note: str | None
     error: str | None
     # Separate aliases, not one `alias=`: the ORM attribute is `metadata_`

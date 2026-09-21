@@ -116,8 +116,27 @@ Accepted`. Paste your `PHOTO_SERVICE_API_KEY` into the field at the top
 (stored in the browser's `localStorage`, never sent anywhere but this
 service). Not part of the product API — just the fastest way to confirm a
 change actually behaves the way you expect against a real image, including
-recent history via the "Recent analyses" section
-(`GET /v1/analyses`).
+recent history via the "Recent analyses" section (`GET /v1/analyses`).
+
+A few things it shows that the raw API response leaves you to infer:
+- **Bounding boxes**, drawn directly on the preview image — amber for every
+  local-triage object, green/orange/blue for CompreFace people (recognized /
+  unknown / just-enrolled). Uses each detection's `box` coordinates
+  (`{x_min, y_min, x_max, y_max}` in the source image's own pixels) via an
+  SVG overlay sized to the image's natural dimensions, so it lines up
+  correctly regardless of how large the browser renders it.
+- **Why People is empty**, when it is — `people_note` on the job distinguishes
+  "CompreFace not configured" from "ran, found no face in this photo" (the
+  single most common outcome on a real security camera — most frames don't
+  have a clear face at all) from an actual CompreFace error, rather than
+  collapsing all three into the same blank list.
+- **"Compare every enabled provider"** checkbox — testing only, not something
+  production traffic sets. Runs every configured vision-LLM provider
+  regardless of the source's tier policy (which normally picks one, per
+  `sources.yaml`) and shows each one's answer in its own card
+  (`provider_results` on the job), so you can actually judge Anthropic vs.
+  Gemini vs. OpenAI vs. Grok on the same photo instead of guessing from
+  production's randomized/single-provider picks.
 
 ## API
 
@@ -138,14 +157,19 @@ Multipart form:
   into a notification)
 - `metadata` *(optional)* — JSON object, stored as-is and echoed back (e.g. a
   memoire object id)
+- `compare_providers` *(optional, testing only)* — run every enabled
+  vision-LLM provider instead of the tier's usual pick; see `/ui` above.
+  Costs one call per provider. Production callers should never set this.
 
 Returns `202` with the created job immediately; analysis runs in the
 background.
 
 ### `GET /v1/jobs/{id}`
 
-Fetch one job: status, triage objects, identified people, description,
-providers used, tier, budget notes.
+Fetch one job: status, triage objects (each with a `box`), identified people
+(each with a `box`, plus `people_note` explaining an empty list), description,
+`provider_results` (one `{provider, text}` entry per vision-LLM call actually
+made), tier, budget notes.
 
 ### `GET /v1/analyses?source=front_door&since_hours=24&limit=50`
 

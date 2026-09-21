@@ -231,3 +231,74 @@ async def test_compreface_runs_even_on_skip_tier(monkeypatch, tmp_path):
     assert job["tier_used"] == "skip"
     assert job["description_providers"] == []  # no paid LLM call
     assert {p["subject"] for p in job["people"]} == {"unknown", "Corey"}
+
+
+async def test_people_note_explains_an_unconfigured_compreface(monkeypatch, tmp_path):
+    """No CompreFace URL/key set in this test env, so people must come back
+    empty with a note saying why -- not silently indistinguishable from
+    "ran and found nothing" or "errored"."""
+    await _configure_default_policy(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(objects=[]),
+    )
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "people_note_test"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["people"] == []
+    assert job["people_note"] == "CompreFace not configured."
+
+
+async def test_compare_providers_runs_every_enabled_provider(monkeypatch, tmp_path):
+    """compare_providers=true is a /ui-only testing override: even on a
+    source that would normally skip the LLM call entirely, it must run every
+    enabled provider and report each one's answer separately in
+    provider_results, regardless of the tier policy decided."""
+    await _configure_default_policy(monkeypatch, tmp_path)  # base_tier: skip
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(
+            objects=[DetectedObject(label="dog", category="animal", confidence=0.9)]
+        ),
+    )
+    fake_a = FakeProvider("fake-a", text="Provider A's take.")
+    fake_b = FakeProvider("fake-b", text="Provider B's take.")
+    monkeypatch.setattr(
+        "app.pipeline.orchestrator.get_enabled_providers",
+        lambda: {"fake-a": fake_a, "fake-b": fake_b},
+    )
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "compare_providers_test", "compare_providers": "true"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["status"] == "completed"
+    assert job["tier_used"] == "skip"  # policy decision is unchanged...
+    assert job["compare_providers"] is True
+    assert fake_a.calls == 1
+    assert fake_b.calls == 1
+    results_by_provider = {r["provider"]: r["text"] for r in job["provider_results"]}
+    assert results_by_provider == {
+        "fake-a": "Provider A's take.",
+        "fake-b": "Provider B's take.",
+    }

@@ -5,6 +5,7 @@ class DetectedObject(BaseModel):
     label: str  # specific class name the detector reported, e.g. "dog", "car", "person"
     category: str  # normalized bucket policy acts on: "person" | "animal" | "vehicle" | "other"
     confidence: float
+    box: dict | None = None  # {"x_min", "y_min", "x_max", "y_max"} in source-image pixels
 
 
 class TriageResult(BaseModel):
