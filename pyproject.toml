@@ -17,6 +17,11 @@ dependencies = [
     "numpy>=2.1",
     "ultralytics>=8.3",
     "opencv-python-headless>=4.10",
+    # Listed explicitly (not left as transitive deps of ultralytics) because
+    # uv's [tool.uv.sources] index override below only reliably applies to
+    # packages that are direct project dependencies.
+    "torch",
+    "torchvision",
     "anthropic>=0.39",
     "openai>=1.60",
     "google-genai>=0.3",
@@ -31,6 +36,21 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# ultralytics pulls in torch, which by default resolves PyPI's CUDA-enabled
+# build (~3GB of NVIDIA runtime libraries) even though triage only ever runs
+# CPU inference on a home server with no GPU. Pinning to PyTorch's CPU-only
+# wheel index cuts the image from ~13GB down to a normal size and avoids
+# downloading/shipping a CUDA stack that torch.cuda.is_available() would
+# report as unusable anyway.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

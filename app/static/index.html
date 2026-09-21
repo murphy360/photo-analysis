@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>photo-analysis — test console</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --border: #ccc;
+    --bg-subtle: #f5f5f5;
+    --accent: #2563eb;
+    --error: #b91c1c;
+    --ok: #15803d;
+    --warn: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --border: #444; --bg-subtle: #1f1f1f; }
+  }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    max-width: 900px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.4;
+  }
+  h1 { font-size: 1.3rem; }
+  h2 { font-size: 1.05rem; margin-top: 2.5rem; }
+  fieldset {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  label { display: block; font-size: 0.85rem; margin-top: 0.6rem; }
+  input, select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.4rem;
+    margin-top: 0.2rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+  }
+  button {
+    margin-top: 1rem;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
+  .status { margin-top: 1rem; font-size: 0.9rem; white-space: pre-wrap; }
+  .status.error { color: var(--error); }
+  .status.ok { color: var(--ok); }
+  .dropzone {
+    margin-top: 0.6rem;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 2rem 1rem;
+    text-align: center;
+    font-size: 0.9rem;
+    opacity: 0.8;
+    cursor: pointer;
+    transition: border-color 0.15s, opacity 0.15s;
+  }
+  .dropzone.drag { border-color: var(--accent); opacity: 1; }
+  .dropzone input { display: none; }
+  .preview { margin-top: 0.75rem; text-align: center; }
+  .preview img { max-width: 100%; max-height: 320px; border-radius: 8px; border: 1px solid var(--border); }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-top: 0.75rem;
+    background: var(--bg-subtle);
+  }
+  .card .meta { font-size: 0.75rem; opacity: 0.7; margin-top: 0.4rem; }
+  .badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+    background: var(--bg-subtle);
+    margin-right: 0.4rem;
+    border: 1px solid var(--border);
+  }
+  .badge.tier-skip { border-color: var(--border); }
+  .badge.tier-cheap, .badge.tier-standard { border-color: var(--accent); color: var(--accent); }
+  .badge.tier-thorough { border-color: var(--warn); color: var(--warn); }
+  .objects span { display: inline-block; margin: 0.2rem 0.3rem 0 0; padding: 0.1rem 0.5rem; border-radius: 10px; background: var(--bg-subtle); border: 1px solid var(--border); font-size: 0.8rem; }
+  .people span { display: inline-block; margin: 0.2rem 0.3rem 0 0; padding: 0.1rem 0.5rem; border-radius: 10px; background: var(--bg-subtle); border: 1px solid var(--ok); font-size: 0.8rem; }
+  .people span.unknown { border-color: var(--warn); }
+  code { font-size: 0.8rem; }
+</style>
+</head>
+<body>
+  <h1>photo-analysis — test console</h1>
+  <p>Manual test UI: drop an image, watch it go through triage → policy → face-id/description, and see the actual
+  evidence (not just "202 Accepted") that the pipeline ran and made the decision you'd expect. Not part of the
+  product — a way to poke <code>/v1/analyze</code> without curl.</p>
+
+  <fieldset>
+    <legend>API key</legend>
+    <label for="apiKey">X-API-Key</label>
+    <input id="apiKey" type="password" placeholder="paste PHOTO_SERVICE_API_KEY" />
+  </fieldset>
+
+  <h2>Analyze</h2>
+  <fieldset>
+    <div class="row">
+      <div>
+        <label for="source">Source (camera/location, or a project name)</label>
+        <input id="source" value="test" />
+      </div>
+      <div>
+        <label for="tier">Tier override</label>
+        <select id="tier">
+          <option value="">(let policy decide)</option>
+          <option value="skip">skip</option>
+          <option value="cheap">cheap</option>
+          <option value="standard">standard</option>
+          <option value="thorough">thorough</option>
+        </select>
+      </div>
+    </div>
+
+    <label>Image or video</label>
+    <div class="dropzone" id="dropzone">
+      <div id="dropzoneLabel">Drop a file here, or click to choose one</div>
+      <input id="fileInput" type="file" accept="image/*,video/*" />
+    </div>
+    <div class="preview" id="preview"></div>
+
+    <button id="analyzeBtn" onclick="analyze()" disabled>Analyze</button>
+    <div class="status" id="analyzeStatus"></div>
+    <div id="analyzeResult"></div>
+  </fieldset>
+
+  <h2>Recent analyses</h2>
+  <fieldset>
+    <div class="row">
+      <div>
+        <label for="filterSource">Source</label>
+        <input id="filterSource" placeholder="(any)" />
+      </div>
+      <div>
+        <label for="filterSinceHours">Since (hours ago)</label>
+        <input id="filterSinceHours" type="number" min="1" placeholder="(any)" />
+      </div>
+    </div>
+    <button onclick="browse()">Fetch analyses</button>
+    <div class="status" id="browseStatus"></div>
+    <div id="browseResults"></div>
+  </fieldset>
+
+<script>
+const API_KEY_STORAGE = "photo_service_api_key";
+let selectedFile = null;
+
+function apiKey() {
+  return document.getElementById("apiKey").value.trim();
+}
+
+function loadApiKey() {
+  try {
+    const saved = localStorage.getItem(API_KEY_STORAGE);
+    if (saved) document.getElementById("apiKey").value = saved;
+  } catch (_) {
+    // best-effort only
+  }
+}
+
+document.getElementById("apiKey").addEventListener("input", (e) => {
+  try {
+    localStorage.setItem(API_KEY_STORAGE, e.target.value.trim());
+  } catch (_) {
+    // best-effort only; browser storage isn't required for the tool to work
+  }
+});
+
+async function apiFetch(path, options = {}) {
+  const headers = Object.assign({}, options.headers, { "X-API-Key": apiKey() });
+  const res = await fetch(path, Object.assign({}, options, { headers }));
+  if (res.status === 401) {
+    throw new Error("401 Unauthorized — check the API key above.");
+  }
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+function setStatus(id, text, kind) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text ?? "";
+  return div.innerHTML;
+}
+
+function setFile(file) {
+  selectedFile = file;
+  document.getElementById("analyzeBtn").disabled = !file;
+  const label = document.getElementById("dropzoneLabel");
+  const preview = document.getElementById("preview");
+  if (!file) {
+    label.textContent = "Drop a file here, or click to choose one";
+    preview.innerHTML = "";
+    return;
+  }
+  label.textContent = `${file.name} (${(file.size / 1024).toFixed(0)} KB)`;
+  preview.innerHTML = "";
+  if (file.type.startsWith("image/")) {
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(file);
+    preview.appendChild(img);
+  } else if (file.type.startsWith("video/")) {
+    const video = document.createElement("video");
+    video.src = URL.createObjectURL(file);
+    video.controls = true;
+    video.style.maxWidth = "100%";
+    video.style.maxHeight = "320px";
+    preview.appendChild(video);
+  }
+}
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+dropzone.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => setFile(fileInput.files[0] || null));
+["dragenter", "dragover"].forEach((evt) =>
+  dropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropzone.classList.add("drag");
+  }),
+);
+["dragleave", "drop"].forEach((evt) =>
+  dropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("drag");
+  }),
+);
+dropzone.addEventListener("drop", (e) => {
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+});
+
+const TIER_NOTE = {
+  skip: "Triage only — no CompreFace call, no LLM call. This is the whole point: routine images shouldn't cost anything.",
+  cheap: "One fast/cheap vision-LLM call.",
+  standard: "One capable vision-LLM call.",
+  thorough: "Multiple providers cross-checked; face-id always runs.",
+};
+
+function objectsHtml(objects) {
+  if (!objects || objects.length === 0) return "<div class=\"meta\">(nothing detected by local triage)</div>";
+  return `<div class="objects">${objects
+    .map((o) => `<span>${escapeHtml(o.category)} — ${escapeHtml(o.label)} (${Math.round(o.confidence * 100)}%)</span>`)
+    .join("")}</div>`;
+}
+
+function peopleHtml(people) {
+  if (!people || people.length === 0) return "<div class=\"meta\">(no faces recognized — CompreFace either wasn't run, or found none)</div>";
+  return `<div class="people">${people
+    .map(
+      (p) =>
+        `<span class="${p.subject === "unknown" ? "unknown" : ""}">${escapeHtml(p.subject)} (${Math.round((p.similarity || 0) * 100)}%)</span>`,
+    )
+    .join("")}</div>`;
+}
+
+function resultCard(job) {
+  const tier = job.tier_used || "(pending)";
+  const providers = (job.description_providers || []).join(", ") || "none";
+  return `
+    <div class="card">
+      <div><span class="badge tier-${tier}">${escapeHtml(tier)}</span>${job.status === "completed" ? "" : `<span class="badge">${job.status}</span>`}</div>
+      <div class="meta">${TIER_NOTE[job.tier_used] || ""}</div>
+      ${job.budget_note ? `<div class="meta">⚠ ${escapeHtml(job.budget_note)}</div>` : ""}
+
+      <div style="margin-top:0.6rem"><b>Local triage (free, always runs)</b></div>
+      ${objectsHtml(job.triage_objects)}
+
+      <div style="margin-top:0.6rem"><b>People (CompreFace)</b></div>
+      ${peopleHtml(job.people)}
+
+      <div style="margin-top:0.6rem"><b>Description</b> <span class="meta">(${escapeHtml(providers)})</span></div>
+      <div>${escapeHtml(job.description) || "<em>(none)</em>"}</div>
+
+      <div class="meta">job #${job.id} · source "${escapeHtml(job.source)}" · created ${job.created_at}${job.completed_at ? " · completed " + job.completed_at : ""}</div>
+      ${job.error ? `<div class="meta" style="color:var(--error)">error: ${escapeHtml(job.error)}</div>` : ""}
+    </div>`;
+}
+
+async function pollJob(jobId, attempt = 0) {
+  const job = await apiFetch(`/v1/jobs/${jobId}`);
+  if (job.status === "pending" || job.status === "running") {
+    if (attempt > 60) {
+      throw new Error("Gave up polling after 60 attempts — check /v1/jobs/" + jobId + " manually.");
+    }
+    setStatus("analyzeStatus", `Job ${jobId}: ${job.status}…`);
+    document.getElementById("analyzeResult").innerHTML = resultCard(job);
+    await new Promise((r) => setTimeout(r, 1500));
+    return pollJob(jobId, attempt + 1);
+  }
+  return job;
+}
+
+async function analyze() {
+  if (!selectedFile) return;
+  const btn = document.getElementById("analyzeBtn");
+  document.getElementById("analyzeResult").innerHTML = "";
+  btn.disabled = true;
+  try {
+    setStatus("analyzeStatus", "Uploading…");
+    const form = new FormData();
+    form.append("file", selectedFile);
+    form.append("source", document.getElementById("source").value || "test");
+    const tier = document.getElementById("tier").value;
+    if (tier) form.append("tier", tier);
+
+    const job = await apiFetch("/v1/analyze", { method: "POST", body: form });
+    setStatus("analyzeStatus", `Job ${job.id} created, waiting…`);
+    const finished = await pollJob(job.id);
+
+    const kind = finished.status === "failed" ? "error" : "ok";
+    setStatus("analyzeStatus", `Job ${finished.id}: ${finished.status}.`, kind);
+    document.getElementById("analyzeResult").innerHTML = resultCard(finished);
+  } catch (err) {
+    setStatus("analyzeStatus", String(err.message || err), "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function browse() {
+  try {
+    setStatus("browseStatus", "Loading…");
+    const params = new URLSearchParams();
+    const source = document.getElementById("filterSource").value.trim();
+    const sinceHours = document.getElementById("filterSinceHours").value;
+    if (source) params.set("source", source);
+    if (sinceHours) params.set("since_hours", sinceHours);
+
+    const jobs = await apiFetch(`/v1/analyses?${params.toString()}`);
+    setStatus("browseStatus", `${jobs.length} analysis(es).`, "ok");
+    document.getElementById("browseResults").innerHTML = jobs.map(resultCard).join("");
+  } catch (err) {
+    setStatus("browseStatus", String(err.message || err), "error");
+  }
+}
+
+loadApiKey();
+</script>
+</body>
+</html>
