@@ -225,6 +225,19 @@ collection with one-off strangers. It can also be set on the top-level
 `default:` block in `sources.yaml` to apply everywhere at once, same as any
 other policy field.
 
+**Recognized names reach the vision-LLM prompt.** CompreFace now runs
+*before* the description step (not concurrently with it, the way it used
+to) specifically so a recognized name can be passed into the prompt — the
+description says "Cathleen Murphy walks a dog" instead of "a woman walks a
+dog" whenever CompreFace already identified her. This costs a little extra
+latency (the two steps used to run in parallel) in exchange for that
+context actually being usable. The literal `"unknown"` placeholder is never
+passed through as if it were a name; an auto-enrolled placeholder like
+`"Amazon Driver 1"` is, since it's still more useful than "a man in a
+uniform." Skip-tier's free auto-generated text gets the same treatment
+(e.g. `"...Recognized: Cathleen Murphy."`) at no extra cost, since no LLM
+call is involved there either way.
+
 ## MCP adapter
 
 `mcp_server/` exposes three tools over streamable-HTTP, each just calling the
@@ -239,6 +252,17 @@ API key is set — Anthropic, Google Gemini, OpenAI, and xAI Grok (which speaks
 the OpenAI-compatible API, so it reuses the OpenAI SDK against a different
 base URL). Add a new one by writing an adapter matching `VisionProvider` in
 `app/providers/base.py` and registering it in `app/providers/registry.py`.
+
+**Which provider gets picked** (for tiers that use just one or two, i.e.
+everything except `thorough`) isn't the first one listed in a source's
+`provider_preference` — it's whichever eligible provider has answered the
+*fewest* jobs historically (`app/repository/analyses.provider_usage_counts`,
+tallied from `description_providers` across all past jobs), ties broken
+randomly. `provider_preference` still acts as a hard filter (e.g. `memoire`'s
+`[anthropic, gemini]` still never picks openai/grok even if configured) —
+usage only decides the order *within* that allowed set. This balances usage
+across providers over time instead of always favoring the same one, without
+needing any state beyond what's already in the jobs table.
 
 ## Development
 

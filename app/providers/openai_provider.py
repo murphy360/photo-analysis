@@ -4,7 +4,7 @@ from openai import AsyncOpenAI
 
 from app.core.config import get_settings
 from app.pipeline.types import DescriptionResult
-from app.providers.base import DESCRIPTION_PROMPT
+from app.providers.base import build_description_prompt
 
 
 class OpenAIProvider:
@@ -17,7 +17,12 @@ class OpenAIProvider:
         self._model_cheap = settings.openai_model_cheap
 
     async def describe(
-        self, image_bytes: bytes, mime_type: str, *, cheap: bool = False
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+        *,
+        cheap: bool = False,
+        known_people: list[str] | None = None,
     ) -> DescriptionResult:
         model = self._model_cheap if cheap else self._model
         data_url = f"data:{mime_type};base64,{base64.standard_b64encode(image_bytes).decode()}"
@@ -28,7 +33,7 @@ class OpenAIProvider:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": DESCRIPTION_PROMPT},
+                        {"type": "text", "text": build_description_prompt(known_people)},
                         {"type": "image_url", "image_url": {"url": data_url}},
                     ],
                 }

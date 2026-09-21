@@ -94,7 +94,7 @@ async def test_skip_tier_never_calls_a_vision_provider(monkeypatch, tmp_path):
     )
     fake = FakeProvider("fake")
     monkeypatch.setattr(
-        "app.pipeline.orchestrator.pick_providers", lambda preference, count: [fake]
+        "app.pipeline.orchestrator.pick_providers", lambda preference, count, usage_counts=None: [fake]
     )
 
     async with await _client() as client:
@@ -130,7 +130,7 @@ async def test_person_escalates_and_calls_provider(monkeypatch, tmp_path):
     )
     fake = FakeProvider("fake", text="A person approaches the front door.")
     monkeypatch.setattr(
-        "app.pipeline.orchestrator.pick_providers", lambda preference, count: [fake]
+        "app.pipeline.orchestrator.pick_providers", lambda preference, count, usage_counts=None: [fake]
     )
 
     async with await _client() as client:
@@ -174,7 +174,7 @@ async def test_unknown_face_auto_enrolled_with_sequential_label(monkeypatch, tmp
     )
     fake = FakeProvider("fake", text="A driver drops off a package.")
     monkeypatch.setattr(
-        "app.pipeline.orchestrator.pick_providers", lambda preference, count: [fake]
+        "app.pipeline.orchestrator.pick_providers", lambda preference, count, usage_counts=None: [fake]
     )
     FakeCompreFaceClient.enroll_calls = []
     monkeypatch.setattr("app.pipeline.orchestrator.CompreFaceClient", FakeCompreFaceClient)
@@ -231,6 +231,47 @@ async def test_compreface_runs_even_on_skip_tier(monkeypatch, tmp_path):
     assert job["tier_used"] == "skip"
     assert job["description_providers"] == []  # no paid LLM call
     assert {p["subject"] for p in job["people"]} == {"unknown", "Corey"}
+    # Even the free auto-generated skip-tier text names a recognized person
+    # rather than staying purely category-level, since it costs nothing more.
+    assert "Recognized: Corey" in job["description"]
+
+
+async def test_recognized_name_passed_into_the_description_prompt(monkeypatch, tmp_path):
+    """The actual point of running CompreFace before the LLM call rather than
+    concurrently with it: a recognized name reaches the vision provider's
+    known_people argument, so the prompt can say "Cathleen Murphy" instead
+    of "a woman" -- and the literal "unknown" placeholder never leaks in."""
+    await _configure_default_policy(
+        monkeypatch, tmp_path, base_tier="standard", escalate_tier="standard"
+    )
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(
+            objects=[DetectedObject(label="person", category="person", confidence=0.9)]
+        ),
+    )
+    fake = FakeProvider("fake", text="Corey walks up to the door.")
+    monkeypatch.setattr(
+        "app.pipeline.orchestrator.pick_providers", lambda preference, count, usage_counts=None: [fake]
+    )
+    monkeypatch.setattr("app.pipeline.orchestrator.CompreFaceClient", FakeCompreFaceClient)
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "known_name_test"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["status"] == "completed"
+    assert job["description"] == "Corey walks up to the door."
+    assert fake.known_people_seen == [["Corey"]]  # "unknown" excluded
 
 
 async def test_people_note_explains_an_unconfigured_compreface(monkeypatch, tmp_path):

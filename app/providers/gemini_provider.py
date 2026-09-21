@@ -3,7 +3,7 @@ from google.genai import types
 
 from app.core.config import get_settings
 from app.pipeline.types import DescriptionResult
-from app.providers.base import DESCRIPTION_PROMPT
+from app.providers.base import build_description_prompt
 
 
 class GeminiProvider:
@@ -16,14 +16,19 @@ class GeminiProvider:
         self._model_cheap = settings.gemini_model_cheap
 
     async def describe(
-        self, image_bytes: bytes, mime_type: str, *, cheap: bool = False
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+        *,
+        cheap: bool = False,
+        known_people: list[str] | None = None,
     ) -> DescriptionResult:
         model = self._model_cheap if cheap else self._model
         response = await self._client.aio.models.generate_content(
             model=model,
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                DESCRIPTION_PROMPT,
+                build_description_prompt(known_people),
             ],
         )
         return DescriptionResult(text=(response.text or "").strip(), provider=self.name)

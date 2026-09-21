@@ -15,6 +15,7 @@ from app.pipeline import policy, triage
 from app.pipeline.policy import SourcePolicy
 from app.pipeline.types import DescriptionResult, TriageResult
 from app.providers.registry import get_enabled_providers, pick_providers
+from app.repository.analyses import provider_usage_counts
 from app.schemas.analysis import AnalysisJobResponse
 
 logger = logging.getLogger(__name__)
@@ -26,15 +27,31 @@ _TIER_PROVIDER_COUNT = {
 }
 
 
-async def _run_provider(provider, job_id: int, image_bytes: bytes, mime_type: str, cheap: bool):
+async def _run_provider(
+    provider,
+    job_id: int,
+    image_bytes: bytes,
+    mime_type: str,
+    cheap: bool,
+    known_people: list[str] | None,
+):
     try:
-        return await provider.describe(image_bytes, mime_type, cheap=cheap)
+        return await provider.describe(
+            image_bytes, mime_type, cheap=cheap, known_people=known_people
+        )
     except Exception:
         logger.exception("Vision provider %s failed for job %s", provider.name, job_id)
         return None
 
 
-async def _describe(job_id: int, image_bytes: bytes, mime_type: str, providers, cheap: bool):
+async def _describe(
+    job_id: int,
+    image_bytes: bytes,
+    mime_type: str,
+    providers,
+    cheap: bool,
+    known_people: list[str] | None,
+):
     """Runs the given providers concurrently — the orchestrator's 'divvy out
     tasking' step for the 'what's happening' half of the pipeline. Returns
     one DescriptionResult per provider that succeeded (a failed one is
@@ -42,7 +59,10 @@ async def _describe(job_id: int, image_bytes: bytes, mime_type: str, providers, 
     return [
         r
         for r in await asyncio.gather(
-            *(_run_provider(p, job_id, image_bytes, mime_type, cheap) for p in providers)
+            *(
+                _run_provider(p, job_id, image_bytes, mime_type, cheap, known_people)
+                for p in providers
+            )
         )
         if r is not None
     ]
@@ -62,7 +82,9 @@ async def _recognize_people(
 ) -> tuple[list[dict], str | None]:
     """Returns (people, note). `people` empty is ambiguous on its own — not
     configured, ran and found nothing, or errored all look the same to a
-    caller that only checks the list — so `note` says which one happened."""
+    caller that only checks the list — so `note` says which one happened.
+    Runs *before* the vision-LLM description step (not concurrently with
+    it) specifically so a recognized name can be passed into that prompt."""
     client = CompreFaceClient()
     if not client.configured:
         return [], "CompreFace not configured."
@@ -93,11 +115,23 @@ async def _recognize_people(
     return enrolled, note
 
 
-async def _skip_description(triage_result: TriageResult) -> tuple[str, list[str]]:
+def _known_names(people: list[dict]) -> list[str]:
+    """Every named subject worth mentioning by name in a description —
+    CompreFace's literal "unknown" placeholder excluded, but an
+    auto-enrolled placeholder like "Amazon Driver 1" is still more useful
+    than "a man in a uniform" and stays in."""
+    return [p["subject"] for p in people if p["subject"] != "unknown"]
+
+
+async def _skip_description(triage_result: TriageResult, known_people: list[str]) -> tuple[str, list[str]]:
     if triage_result.is_empty:
-        return "Triage only (no LLM call): nothing notable detected.", []
-    detail = ", ".join(sorted(f"{o.category} ({o.label})" for o in triage_result.objects))
-    return f"Triage only (no LLM call): detected {detail}.", []
+        text = "Triage only (no LLM call): nothing notable detected."
+    else:
+        detail = ", ".join(sorted(f"{o.category} ({o.label})" for o in triage_result.objects))
+        text = f"Triage only (no LLM call): detected {detail}."
+    if known_people:
+        text += f" Recognized: {', '.join(known_people)}."
+    return text, []
 
 
 async def run_analysis_job(
@@ -142,43 +176,50 @@ async def run_analysis_job(
             # also means a person triage's object detector missed (partial
             # occlusion, small/distant, misclassified) still gets a chance
             # at being identified.
+            #
+            # Run *before* the description step, not concurrently with it:
+            # a name CompreFace recognizes gets passed into the vision-LLM
+            # prompt so the description says "Cathleen Murphy" instead of
+            # "a woman" — that dependency is exactly why these two can't
+            # run in parallel the way they used to.
+            people, people_note = await _recognize_people(image_bytes, decision.policy)
+            known_people = _known_names(people)
+            job.people = people
+            job.people_note = people_note
+
             # compare_providers is a /ui-only testing knob: run every
             # enabled provider (not just the tier's usual count) so you can
             # see what each one actually says side by side, regardless of
             # what tier policy would normally have picked. Production
             # traffic never sets this — it costs a call per provider.
             if compare_providers:
-                description_task = _describe(
-                    job_id, image_bytes, mime_type, list(get_enabled_providers().values()), False
+                results = await _describe(
+                    job_id,
+                    image_bytes,
+                    mime_type,
+                    list(get_enabled_providers().values()),
+                    False,
+                    known_people,
                 )
-                is_skip = False
+                job.provider_results = [{"provider": r.provider, "text": r.text} for r in results]
+                job.description, job.description_providers = _merge_description(results)
             elif decision.tier == AnalysisTier.SKIP:
-                description_task = _skip_description(triage_result)
-                is_skip = True
-            else:
-                count = _TIER_PROVIDER_COUNT.get(decision.tier, 1)
-                providers = pick_providers(decision.policy.provider_preference, count)
-                cheap = decision.tier == AnalysisTier.CHEAP
-                description_task = _describe(job_id, image_bytes, mime_type, providers, cheap)
-                is_skip = False
-
-            (people, people_note), description_result = await asyncio.gather(
-                _recognize_people(image_bytes, decision.policy), description_task
-            )
-
-            if is_skip:
-                job.description, job.description_providers = description_result
+                job.description, job.description_providers = await _skip_description(
+                    triage_result, known_people
+                )
                 job.provider_results = []
             else:
-                job.provider_results = [
-                    {"provider": r.provider, "text": r.text} for r in description_result
-                ]
-                job.description, job.description_providers = _merge_description(
-                    description_result
+                count = _TIER_PROVIDER_COUNT.get(decision.tier, 1)
+                usage_counts = await provider_usage_counts(session)
+                providers = pick_providers(
+                    decision.policy.provider_preference, count, usage_counts
                 )
-
-            job.people = people
-            job.people_note = people_note
+                cheap = decision.tier == AnalysisTier.CHEAP
+                results = await _describe(
+                    job_id, image_bytes, mime_type, providers, cheap, known_people
+                )
+                job.provider_results = [{"provider": r.provider, "text": r.text} for r in results]
+                job.description, job.description_providers = _merge_description(results)
 
             job.status = JobStatus.COMPLETED
         except Exception as exc:  # noqa: BLE001 - surfaced to the client via job.error

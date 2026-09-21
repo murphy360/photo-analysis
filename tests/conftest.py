@@ -20,11 +20,18 @@ class FakeProvider:
         self.name = name
         self._text = text
         self.calls = 0
+        self.known_people_seen: list[list[str] | None] = []
 
     async def describe(
-        self, image_bytes: bytes, mime_type: str, *, cheap: bool = False
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+        *,
+        cheap: bool = False,
+        known_people: list[str] | None = None,
     ) -> DescriptionResult:
         self.calls += 1
+        self.known_people_seen.append(known_people)
         return DescriptionResult(text=self._text, provider=self.name)
 
 
