@@ -10,7 +10,15 @@ def test_prompt_without_scene_context_or_names_says_not_to_guess():
 def test_prompt_with_scene_context_steers_toward_whats_different():
     prompt = build_description_prompt(scene_context="a grassy yard with a gravel path")
     assert "a grassy yard with a gravel path" in prompt
-    assert "rather than re-describing the fixed background" in prompt
+    assert "genuinely out of place relative to that fixed scene" in prompt
+
+
+def test_prompt_with_scene_context_tells_it_not_to_flag_seasonal_change():
+    """The season/weather-agnostic instruction lives once in the prompt
+    template, not repeated in every source's scene_context text."""
+    prompt = build_description_prompt(scene_context="a grassy yard with a gravel path")
+    assert "varies with season, weather, and lighting" in prompt
+    assert "that's not something to call out" in prompt
 
 
 def test_prompt_with_known_people_names_them_instead_of_guessing():
@@ -25,3 +33,13 @@ def test_prompt_combines_scene_context_and_known_people():
     )
     assert "Cathleen Murphy" in prompt
     assert "a grassy yard with a gravel path" in prompt
+
+
+def test_prompt_with_location_names_the_camera():
+    prompt = build_description_prompt(location="Front Yard")
+    assert 'camera watching "Front Yard"' in prompt
+
+
+def test_prompt_without_location_says_nothing_about_a_camera_name():
+    prompt = build_description_prompt()
+    assert "camera watching" not in prompt

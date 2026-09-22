@@ -35,6 +35,7 @@ async def _run_provider(
     cheap: bool,
     known_people: list[str] | None,
     scene_context: str | None,
+    location: str | None,
 ) -> dict:
     """Returns {"provider", "text", "error"} either way — a failure is
     logged and never allowed to fail the whole job, but (unlike dropping it
@@ -48,6 +49,7 @@ async def _run_provider(
             cheap=cheap,
             known_people=known_people,
             scene_context=scene_context,
+            location=location,
         )
         return {"provider": provider.name, "text": result.text, "error": None}
     except Exception as exc:
@@ -63,6 +65,7 @@ async def _describe(
     cheap: bool,
     known_people: list[str] | None,
     scene_context: str | None,
+    location: str | None,
 ) -> list[dict]:
     """Runs the given providers concurrently — the orchestrator's 'divvy out
     tasking' step for the 'what's happening' half of the pipeline. Returns
@@ -71,7 +74,14 @@ async def _describe(
         await asyncio.gather(
             *(
                 _run_provider(
-                    p, job_id, image_bytes, mime_type, cheap, known_people, scene_context
+                    p,
+                    job_id,
+                    image_bytes,
+                    mime_type,
+                    cheap,
+                    known_people,
+                    scene_context,
+                    location,
                 )
                 for p in providers
             )
@@ -213,6 +223,7 @@ async def run_analysis_job(
                     False,
                     known_people,
                     decision.policy.scene_context,
+                    source,
                 )
                 job.provider_results = results
                 job.description, job.description_providers = _merge_description(results)
@@ -236,6 +247,7 @@ async def run_analysis_job(
                     cheap,
                     known_people,
                     decision.policy.scene_context,
+                    source,
                 )
                 job.provider_results = results
                 job.description, job.description_providers = _merge_description(results)

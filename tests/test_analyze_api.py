@@ -463,3 +463,38 @@ async def test_scene_context_reaches_the_provider(monkeypatch, tmp_path):
     assert fake.scene_context_seen == [
         "a grassy front yard with a gravel path and a metal yard sculpture"
     ]
+
+
+async def test_source_name_passed_to_provider_as_location(monkeypatch, tmp_path):
+    """The camera/source name itself (e.g. "Front Yard") must reach the
+    vision provider too, even when no scene_context is configured for it,
+    so the model knows which camera it's looking at."""
+    await _configure_default_policy(
+        monkeypatch, tmp_path, base_tier="standard", escalate_tier="standard"
+    )
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(
+            objects=[DetectedObject(label="person", category="person", confidence=0.9)]
+        ),
+    )
+    fake = FakeProvider("fake")
+    monkeypatch.setattr(
+        "app.pipeline.orchestrator.pick_providers", lambda preference, count, usage_counts=None: [fake]
+    )
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "Front Yard"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["status"] == "completed"
+    assert fake.location_seen == ["Front Yard"]

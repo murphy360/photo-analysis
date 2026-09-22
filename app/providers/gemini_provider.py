@@ -23,13 +23,14 @@ class GeminiProvider:
         cheap: bool = False,
         known_people: list[str] | None = None,
         scene_context: str | None = None,
+        location: str | None = None,
     ) -> DescriptionResult:
         model = self._model_cheap if cheap else self._model
         response = await self._client.aio.models.generate_content(
             model=model,
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                build_description_prompt(known_people, scene_context),
+                build_description_prompt(known_people, scene_context, location),
             ],
         )
         return DescriptionResult(text=(response.text or "").strip(), provider=self.name)

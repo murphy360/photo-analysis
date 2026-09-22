@@ -101,7 +101,17 @@ front_yard:
 ```
 
 Keep it to the fixed scenery — what's *always* there — not anything that
-moves through it.
+moves through it. It doesn't need season-hedging either ("grass, which may
+be green or brown/snow-covered depending on time of year") — the prompt
+template already tells the model once, generically, that a scene's actual
+appearance varies with season/weather/lighting and that's not something to
+call out, so every source's `scene_context` text can just describe the
+fixed landscape plainly.
+
+The source/camera name itself (e.g. `"Front Yard"`) is also always passed
+to the model as which camera it's looking at, independent of whether
+`scene_context` is set — so even a source with no scene description
+configured yet still gets that much context.
 
 **Gotcha: source matching is an exact, case-sensitive string comparison.**
 If your camera/automation sends `"Front Yard"` but `sources.yaml` only has a

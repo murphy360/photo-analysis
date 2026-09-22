@@ -11,7 +11,9 @@ _BASE_PROMPT = (
 
 
 def build_description_prompt(
-    known_people: list[str] | None = None, scene_context: str | None = None
+    known_people: list[str] | None = None,
+    scene_context: str | None = None,
+    location: str | None = None,
 ) -> str:
     """CompreFace runs before this (app.pipeline.orchestrator), so by the
     time the vision-LLM is called, identity may already be known — pass
@@ -24,15 +26,27 @@ def build_description_prompt(
     model tends to spend most of its 1-3 sentences re-describing the yard/
     path/trees that look the same in every single photo, instead of the
     thing that actually triggered the capture. Telling it what's normal
-    lets it focus on what's different."""
+    lets it focus on what's different. The season-agnostic instruction
+    below is deliberately generic and lives here once, rather than being
+    repeated in every source's scene_context text — a fixed camera's actual
+    appearance still shifts with foliage/snow/lighting even though the
+    landscape itself doesn't change.
+
+    location (the source/camera name, e.g. "Front Yard") tells the model
+    which camera this is, even when no scene_context is configured for it."""
     parts = [_BASE_PROMPT]
+
+    if location:
+        parts.append(f' This photo is from a camera watching "{location}".')
 
     if scene_context:
         parts.append(
-            f" This camera's normal, unchanging view: {scene_context} Focus on what's "
-            "notable or out of place relative to that — the person, animal, vehicle, "
-            "or object that actually triggered this capture — rather than "
-            "re-describing the fixed background itself."
+            f" This camera's normal, unchanging view: {scene_context} Its appearance "
+            "still varies with season, weather, and lighting (foliage, snow cover, "
+            "shadows, time of day) — that's not something to call out. Focus only on "
+            "what's genuinely out of place relative to that fixed scene: the person, "
+            "animal, vehicle, or object that actually triggered this capture, not the "
+            "background itself."
         )
 
     if known_people:
@@ -64,4 +78,5 @@ class VisionProvider(Protocol):
         cheap: bool = False,
         known_people: list[str] | None = None,
         scene_context: str | None = None,
+        location: str | None = None,
     ) -> DescriptionResult: ...

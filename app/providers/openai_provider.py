@@ -24,6 +24,7 @@ class OpenAIProvider:
         cheap: bool = False,
         known_people: list[str] | None = None,
         scene_context: str | None = None,
+        location: str | None = None,
     ) -> DescriptionResult:
         model = self._model_cheap if cheap else self._model
         data_url = f"data:{mime_type};base64,{base64.standard_b64encode(image_bytes).decode()}"
@@ -36,7 +37,9 @@ class OpenAIProvider:
                     "content": [
                         {
                             "type": "text",
-                            "text": build_description_prompt(known_people, scene_context),
+                            "text": build_description_prompt(
+                                known_people, scene_context, location
+                            ),
                         },
                         {"type": "image_url", "image_url": {"url": data_url}},
                     ],
