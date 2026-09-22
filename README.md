@@ -137,6 +137,13 @@ A few things it shows that the raw API response leaves you to infer:
   (`provider_results` on the job), so you can actually judge Anthropic vs.
   Gemini vs. OpenAI vs. Grok on the same photo instead of guessing from
   production's randomized/single-provider picks.
+- **A failed provider stays visible instead of vanishing.** `provider_results`
+  has one entry per provider *attempted*, success or failure — a card with a
+  red border and the actual error message, not just a missing card. (This is
+  the direct fix for a real outage: Grok's configured model name 404'd on
+  every call, and the job just came back with an empty description and no
+  indication why. `description`/`description_providers` still only ever
+  draw from providers that actually succeeded.)
 
 ## API
 
@@ -168,8 +175,9 @@ background.
 
 Fetch one job: status, triage objects (each with a `box`), identified people
 (each with a `box`, plus `people_note` explaining an empty list), description,
-`provider_results` (one `{provider, text}` entry per vision-LLM call actually
-made), tier, budget notes.
+`provider_results` (one `{provider, text, error}` entry per vision-LLM
+provider actually attempted — `error` is non-null and `text` is null for one
+that failed, rather than it just being absent), tier, budget notes.
 
 ### `GET /v1/analyses?source=front_door&since_hours=24&limit=50`
 
@@ -252,6 +260,17 @@ API key is set — Anthropic, Google Gemini, OpenAI, and xAI Grok (which speaks
 the OpenAI-compatible API, so it reuses the OpenAI SDK against a different
 base URL). Add a new one by writing an adapter matching `VisionProvider` in
 `app/providers/base.py` and registering it in `app/providers/registry.py`.
+
+xAI's model lineup moves fast — `GROK_MODEL`/`GROK_MODEL_CHEAP` default to
+`grok-4.7` (confirmed vision-capable via xAI's own docs; `grok-2-vision-1212`,
+this repo's original default, no longer exists and 404s every call). Both
+tiers point at the same model for now since a cheaper Grok model's vision
+support isn't confirmed — check xAI's current docs before splitting them
+back into two, rather than guessing a model name. If a provider's model name
+ever goes stale like this again, it fails loud now: a failed provider shows
+up in `provider_results` with its actual error instead of just vanishing
+(see `/ui` above) — check there first rather than digging through container
+logs.
 
 **Which provider gets picked** (for tiers that use just one or two, i.e.
 everything except `thorough`) isn't the first one listed in a source's

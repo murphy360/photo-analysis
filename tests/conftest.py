@@ -14,11 +14,16 @@ from app.pipeline.types import DescriptionResult  # noqa: E402
 
 
 class FakeProvider:
-    """A VisionProvider stand-in with no network calls, for pipeline/API tests."""
+    """A VisionProvider stand-in with no network calls, for pipeline/API tests.
+    Pass error="..." to simulate a provider that raises (e.g. a 404 from a
+    stale/misconfigured model name) instead of returning a description."""
 
-    def __init__(self, name: str, text: str = "A person walks up to the door.") -> None:
+    def __init__(
+        self, name: str, text: str = "A person walks up to the door.", error: str | None = None
+    ) -> None:
         self.name = name
         self._text = text
+        self._error = error
         self.calls = 0
         self.known_people_seen: list[list[str] | None] = []
 
@@ -32,6 +37,8 @@ class FakeProvider:
     ) -> DescriptionResult:
         self.calls += 1
         self.known_people_seen.append(known_people)
+        if self._error:
+            raise RuntimeError(self._error)
         return DescriptionResult(text=self._text, provider=self.name)
 
 

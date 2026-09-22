@@ -25,8 +25,13 @@ class Settings(BaseSettings):
 
     grok_api_key: str | None = Field(default=None, alias="GROK_API_KEY")
     grok_base_url: str = Field(default="https://api.x.ai/v1", alias="GROK_BASE_URL")
-    grok_model: str = Field(default="grok-2-vision-1212", alias="GROK_MODEL")
-    grok_model_cheap: str = Field(default="grok-2-vision-1212", alias="GROK_MODEL_CHEAP")
+    # grok-2-vision-1212 is gone (xAI moved to the grok-4.x line); grok-4.7 is
+    # confirmed vision-capable per xAI's own image-understanding guide. Both
+    # tiers point at it for now since a cheaper Grok model's vision support
+    # isn't confirmed — verify before splitting these back into two, the same
+    # way a wrong guess here 404s silently rather than erroring loudly.
+    grok_model: str = Field(default="grok-4.7", alias="GROK_MODEL")
+    grok_model_cheap: str = Field(default="grok-4.7", alias="GROK_MODEL_CHEAP")
 
     compreface_url: str | None = Field(default=None, alias="COMPREFACE_URL")
     compreface_recognition_api_key: str | None = Field(

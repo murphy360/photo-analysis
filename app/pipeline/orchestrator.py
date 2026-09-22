@@ -13,7 +13,7 @@ from app.models.analysis import AnalysisJob
 from app.models.enums import AnalysisTier, JobStatus
 from app.pipeline import policy, triage
 from app.pipeline.policy import SourcePolicy
-from app.pipeline.types import DescriptionResult, TriageResult
+from app.pipeline.types import TriageResult
 from app.providers.registry import get_enabled_providers, pick_providers
 from app.repository.analyses import provider_usage_counts
 from app.schemas.analysis import AnalysisJobResponse
@@ -34,14 +34,20 @@ async def _run_provider(
     mime_type: str,
     cheap: bool,
     known_people: list[str] | None,
-):
+) -> dict:
+    """Returns {"provider", "text", "error"} either way — a failure is
+    logged and never allowed to fail the whole job, but (unlike dropping it
+    silently) it stays visible as its own entry instead of just vanishing,
+    so e.g. a misconfigured model name shows up as "grok: 404 ..." in
+    provider_results rather than an unexplained empty result."""
     try:
-        return await provider.describe(
+        result = await provider.describe(
             image_bytes, mime_type, cheap=cheap, known_people=known_people
         )
-    except Exception:
+        return {"provider": provider.name, "text": result.text, "error": None}
+    except Exception as exc:
         logger.exception("Vision provider %s failed for job %s", provider.name, job_id)
-        return None
+        return {"provider": provider.name, "text": None, "error": str(exc)}
 
 
 async def _describe(
@@ -51,30 +57,28 @@ async def _describe(
     providers,
     cheap: bool,
     known_people: list[str] | None,
-):
+) -> list[dict]:
     """Runs the given providers concurrently — the orchestrator's 'divvy out
     tasking' step for the 'what's happening' half of the pipeline. Returns
-    one DescriptionResult per provider that succeeded (a failed one is
-    logged and silently dropped, not allowed to fail the whole job)."""
-    return [
-        r
-        for r in await asyncio.gather(
+    one entry per provider *attempted*, success or failure alike."""
+    return list(
+        await asyncio.gather(
             *(
                 _run_provider(p, job_id, image_bytes, mime_type, cheap, known_people)
                 for p in providers
             )
         )
-        if r is not None
-    ]
+    )
 
 
-def _merge_description(results: list[DescriptionResult]) -> tuple[str | None, list[str]]:
-    if not results:
+def _merge_description(results: list[dict]) -> tuple[str | None, list[str]]:
+    successes = [r for r in results if r["error"] is None]
+    if not successes:
         return None, []
-    if len(results) == 1:
-        return results[0].text, [results[0].provider]
-    merged = "\n".join(f"[{r.provider}] {r.text}" for r in results)
-    return merged, [r.provider for r in results]
+    if len(successes) == 1:
+        return successes[0]["text"], [successes[0]["provider"]]
+    merged = "\n".join(f"[{r['provider']}] {r['text']}" for r in successes)
+    return merged, [r["provider"] for r in successes]
 
 
 async def _recognize_people(
@@ -201,7 +205,7 @@ async def run_analysis_job(
                     False,
                     known_people,
                 )
-                job.provider_results = [{"provider": r.provider, "text": r.text} for r in results]
+                job.provider_results = results
                 job.description, job.description_providers = _merge_description(results)
             elif decision.tier == AnalysisTier.SKIP:
                 job.description, job.description_providers = await _skip_description(
@@ -218,7 +222,7 @@ async def run_analysis_job(
                 results = await _describe(
                     job_id, image_bytes, mime_type, providers, cheap, known_people
                 )
-                job.provider_results = [{"provider": r.provider, "text": r.text} for r in results]
+                job.provider_results = results
                 job.description, job.description_providers = _merge_description(results)
 
             job.status = JobStatus.COMPLETED

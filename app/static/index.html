@@ -358,16 +358,30 @@ function boxLegendHtml(job) {
 
 function providerResultsHtml(job) {
   const results = job.provider_results || [];
-  if (results.length === 0 || (results.length === 1 && !job.compare_providers)) return null;
+  if (results.length === 0) return null;
+  const hasFailure = results.some((r) => r.error);
+  // A single clean success without compare mode on falls through to the
+  // plain "Description" block below instead — no point showing a
+  // one-card "comparison". Anything with a failure in it, or more than
+  // one result, or an explicit compare_providers run, gets the full
+  // breakdown so a failed provider is never just silently absent.
+  if (!job.compare_providers && results.length === 1 && !hasFailure) return null;
+
   return `
-    <div style="margin-top:0.6rem"><b>Provider comparison</b> <span class="meta">(${results.length} provider(s), testing mode)</span></div>
+    <div style="margin-top:0.6rem"><b>Provider comparison</b> <span class="meta">(${results.length} provider(s) attempted, testing mode)</span></div>
     ${results
-      .map(
-        (r) => `<div class="provider-card">
+      .map((r) => {
+        if (r.error) {
+          return `<div class="provider-card" style="border-color:var(--error)">
+            <div class="meta"><b>${escapeHtml(r.provider)}</b> · <span style="color:var(--error)">failed</span></div>
+            <div style="color:var(--error)">${escapeHtml(r.error)}</div>
+          </div>`;
+        }
+        return `<div class="provider-card">
           <div class="meta"><b>${escapeHtml(r.provider)}</b></div>
           <div>${escapeHtml(r.text)}</div>
-        </div>`,
-      )
+        </div>`;
+      })
       .join("")}`;
 }
 

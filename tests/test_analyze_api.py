@@ -343,3 +343,82 @@ async def test_compare_providers_runs_every_enabled_provider(monkeypatch, tmp_pa
         "fake-a": "Provider A's take.",
         "fake-b": "Provider B's take.",
     }
+
+
+async def test_failed_provider_shows_up_in_provider_results_instead_of_vanishing(
+    monkeypatch, tmp_path
+):
+    """The actual production bug this test exists for: Grok's configured
+    model returned 404 for every call, and the job just came back with no
+    description and no indication why — the failing provider silently
+    disappeared instead of being reported. A failed provider must appear in
+    provider_results with its error, and a provider that did succeed must
+    still show up correctly alongside it."""
+    await _configure_default_policy(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(objects=[]),
+    )
+    fake_ok = FakeProvider("fake-ok", text="A calm, empty yard.")
+    fake_broken = FakeProvider("fake-broken", error="404 Not Found: model does not exist")
+    monkeypatch.setattr(
+        "app.pipeline.orchestrator.get_enabled_providers",
+        lambda: {"fake-ok": fake_ok, "fake-broken": fake_broken},
+    )
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "provider_failure_test", "compare_providers": "true"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["status"] == "completed"
+    results_by_provider = {r["provider"]: r for r in job["provider_results"]}
+    assert results_by_provider["fake-broken"]["error"] == "404 Not Found: model does not exist"
+    assert results_by_provider["fake-broken"]["text"] is None
+    assert results_by_provider["fake-ok"]["error"] is None
+    assert results_by_provider["fake-ok"]["text"] == "A calm, empty yard."
+    # The merged description only draws from providers that actually succeeded.
+    assert job["description"] == "A calm, empty yard."
+    assert job["description_providers"] == ["fake-ok"]
+
+
+async def test_all_providers_failing_leaves_description_none_not_a_crash(monkeypatch, tmp_path):
+    await _configure_default_policy(
+        monkeypatch, tmp_path, base_tier="standard", escalate_tier="standard"
+    )
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(objects=[]),
+    )
+    fake_broken = FakeProvider("fake-broken", error="404 Not Found")
+    monkeypatch.setattr(
+        "app.pipeline.orchestrator.pick_providers", lambda preference, count, usage_counts=None: [fake_broken]
+    )
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "provider_total_failure_test"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["status"] == "completed"  # a provider failing doesn't fail the whole job
+    assert job["description"] is None
+    assert job["description_providers"] == []
+    assert job["provider_results"] == [
+        {"provider": "fake-broken", "text": None, "error": "404 Not Found"}
+    ]
