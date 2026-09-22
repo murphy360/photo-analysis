@@ -34,6 +34,7 @@ async def _run_provider(
     mime_type: str,
     cheap: bool,
     known_people: list[str] | None,
+    scene_context: str | None,
 ) -> dict:
     """Returns {"provider", "text", "error"} either way — a failure is
     logged and never allowed to fail the whole job, but (unlike dropping it
@@ -42,7 +43,11 @@ async def _run_provider(
     provider_results rather than an unexplained empty result."""
     try:
         result = await provider.describe(
-            image_bytes, mime_type, cheap=cheap, known_people=known_people
+            image_bytes,
+            mime_type,
+            cheap=cheap,
+            known_people=known_people,
+            scene_context=scene_context,
         )
         return {"provider": provider.name, "text": result.text, "error": None}
     except Exception as exc:
@@ -57,6 +62,7 @@ async def _describe(
     providers,
     cheap: bool,
     known_people: list[str] | None,
+    scene_context: str | None,
 ) -> list[dict]:
     """Runs the given providers concurrently — the orchestrator's 'divvy out
     tasking' step for the 'what's happening' half of the pipeline. Returns
@@ -64,7 +70,9 @@ async def _describe(
     return list(
         await asyncio.gather(
             *(
-                _run_provider(p, job_id, image_bytes, mime_type, cheap, known_people)
+                _run_provider(
+                    p, job_id, image_bytes, mime_type, cheap, known_people, scene_context
+                )
                 for p in providers
             )
         )
@@ -204,6 +212,7 @@ async def run_analysis_job(
                     list(get_enabled_providers().values()),
                     False,
                     known_people,
+                    decision.policy.scene_context,
                 )
                 job.provider_results = results
                 job.description, job.description_providers = _merge_description(results)
@@ -220,7 +229,13 @@ async def run_analysis_job(
                 )
                 cheap = decision.tier == AnalysisTier.CHEAP
                 results = await _describe(
-                    job_id, image_bytes, mime_type, providers, cheap, known_people
+                    job_id,
+                    image_bytes,
+                    mime_type,
+                    providers,
+                    cheap,
+                    known_people,
+                    decision.policy.scene_context,
                 )
                 job.provider_results = results
                 job.description, job.description_providers = _merge_description(results)

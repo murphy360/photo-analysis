@@ -422,3 +422,44 @@ async def test_all_providers_failing_leaves_description_none_not_a_crash(monkeyp
     assert job["provider_results"] == [
         {"provider": "fake-broken", "text": None, "error": "404 Not Found"}
     ]
+
+
+async def test_scene_context_reaches_the_provider(monkeypatch, tmp_path):
+    """A source's fixed scene_context (sources.yaml) must reach the vision
+    provider so the prompt can steer it toward what's different rather than
+    re-describing the same yard/path/trees on every single photo."""
+    await _configure_default_policy(
+        monkeypatch,
+        tmp_path,
+        base_tier="standard",
+        escalate_tier="standard",
+        scene_context="a grassy front yard with a gravel path and a metal yard sculpture",
+    )
+    monkeypatch.setattr(
+        triage,
+        "run",
+        lambda path: TriageResult(
+            objects=[DetectedObject(label="person", category="person", confidence=0.9)]
+        ),
+    )
+    fake = FakeProvider("fake")
+    monkeypatch.setattr(
+        "app.pipeline.orchestrator.pick_providers", lambda preference, count, usage_counts=None: [fake]
+    )
+
+    async with await _client() as client:
+        headers = {"X-API-Key": API_KEY}
+        create = await client.post(
+            "/v1/analyze",
+            headers=headers,
+            data={"source": "scene_context_test"},
+            files={"file": ("photo.jpg", _fake_jpeg(), "image/jpeg")},
+        )
+        job_id = create.json()["id"]
+        response = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        job = response.json()
+
+    assert job["status"] == "completed"
+    assert fake.scene_context_seen == [
+        "a grassy front yard with a gravel path and a metal yard sculpture"
+    ]

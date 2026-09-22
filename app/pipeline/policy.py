@@ -35,6 +35,14 @@ class SourcePolicy(BaseModel):
     # tracking recurring delivery drivers on). Numbering is derived from
     # CompreFace's existing subjects, not a counter this service keeps.
     unknown_face_label: str = "Unknown"
+    # A fixed description of this camera's normal, unchanging view (e.g. "a
+    # grassy front yard with a gravel path, trees along the back, and a
+    # metal yard sculpture near the tree line"). Without this, a vision-LLM
+    # tends to spend most of its answer re-describing the yard/path/trees
+    # that look the same in every photo instead of the thing that actually
+    # triggered the capture — telling it what's normal lets it focus on
+    # what's different. Optional; skipped in the prompt when unset.
+    scene_context: str | None = None
 
     def escalates(self, triage: TriageResult) -> bool:
         if "*" in self.escalate_on:

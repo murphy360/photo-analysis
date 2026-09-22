@@ -84,6 +84,25 @@ run up a bill (triage and CompreFace still run; only the LLM call is capped).
 See `app/config/sources.example.yaml` for the full policy format and a
 worked example (yard cam vs. front door vs. memoire uploads).
 
+**Fighting "describes the yard, not the deer."** A fixed camera's photos
+look nearly identical frame to frame — same grass, same path, same trees —
+so a vision-LLM asked to just "describe this photo" tends to spend most of
+its answer on that static backdrop instead of whatever actually triggered
+the capture. Set `scene_context` on a source in `sources.yaml` to a plain-
+English description of that camera's *normal, unchanging* view, and it gets
+woven into the prompt with an explicit instruction to focus on what's
+different from that baseline, not what's always there:
+
+```yaml
+front_yard:
+  scene_context: >
+    A grassy front yard with a paved/gravel walking path curving through it,
+    trees along the back edge, and a utility pole. Nothing here moves on its own.
+```
+
+Keep it to the fixed scenery — what's *always* there — not anything that
+moves through it.
+
 **Gotcha: source matching is an exact, case-sensitive string comparison.**
 If your camera/automation sends `"Front Yard"` but `sources.yaml` only has a
 `front_yard:` entry, that request silently falls through to `default:`

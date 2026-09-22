@@ -26,6 +26,7 @@ class FakeProvider:
         self._error = error
         self.calls = 0
         self.known_people_seen: list[list[str] | None] = []
+        self.scene_context_seen: list[str | None] = []
 
     async def describe(
         self,
@@ -34,9 +35,11 @@ class FakeProvider:
         *,
         cheap: bool = False,
         known_people: list[str] | None = None,
+        scene_context: str | None = None,
     ) -> DescriptionResult:
         self.calls += 1
         self.known_people_seen.append(known_people)
+        self.scene_context_seen.append(scene_context)
         if self._error:
             raise RuntimeError(self._error)
         return DescriptionResult(text=self._text, provider=self.name)

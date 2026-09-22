@@ -23,6 +23,7 @@ class AnthropicProvider:
         *,
         cheap: bool = False,
         known_people: list[str] | None = None,
+        scene_context: str | None = None,
     ) -> DescriptionResult:
         model = self._model_cheap if cheap else self._model
         response = await self._client.messages.create(
@@ -40,7 +41,10 @@ class AnthropicProvider:
                                 "data": base64.standard_b64encode(image_bytes).decode(),
                             },
                         },
-                        {"type": "text", "text": build_description_prompt(known_people)},
+                        {
+                            "type": "text",
+                            "text": build_description_prompt(known_people, scene_context),
+                        },
                     ],
                 }
             ],
